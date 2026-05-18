@@ -267,6 +267,7 @@ async def _run_pipeline(
         history_fn,
         soap_note,
         patient.id,
+        db,
         default=[],
         label="history_retrieval",
     )

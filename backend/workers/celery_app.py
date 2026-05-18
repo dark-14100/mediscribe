@@ -13,7 +13,9 @@ celery_app = Celery(
     "medscribe",
     broker=settings.REDIS_URL,
     backend=settings.REDIS_URL,
-    include=["workers.tasks"],
+    # services.embedding registers "workers.tasks.embed_visit" under the
+    # same task name expected by notes.py — both modules must be included.
+    include=["workers.tasks", "services.embedding"],
 )
 
 celery_app.conf.update(
