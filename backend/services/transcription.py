@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import shutil
 import tempfile
@@ -16,25 +17,154 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 GROQ_TRANSCRIPTION_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-GROQ_MODEL = "whisper-large-v3-turbo"
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_WHISPER_MODEL = "whisper-large-v3-turbo"
+GROQ_LLM_MODEL = "llama-3.3-70b-versatile"
+
 SPEAKERS = ("doctor", "patient")
 
+# ---------------------------------------------------------------------------
+# Fallback heuristic — question-mark only
+# ---------------------------------------------------------------------------
 
-def _format_transcript(segments: list[dict]) -> list[dict[str, str | int]]:
-    transcript: list[dict[str, str | int]] = []
-    for i, segment in enumerate(segments):
+def _assign_speaker_fallback(text: str, index: int) -> str:
+    """
+    Minimal fallback heuristic used only when LLaMA diarization fails.
+    Lines ending with '?' are labelled doctor; everything else alternates.
+    """
+    if text.strip().endswith("?"):
+        return "doctor"
+    return SPEAKERS[index % 2]
+
+
+# ---------------------------------------------------------------------------
+# LLaMA diarization layer
+# ---------------------------------------------------------------------------
+
+_DIARIZE_SYSTEM_PROMPT = """You are a medical transcription assistant. 
+You will be given a list of speech segments from a doctor-patient consultation, each with an index.
+Your job is to label each segment as either "doctor" or "patient".
+
+Rules:
+- The conversation is strictly between one doctor and one patient.
+- Only use the labels "doctor" or "patient" — no other values.
+- Return ONLY a JSON object in this exact shape, with no explanation or extra text:
+  {"labels": ["doctor", "patient", "doctor", ...]}
+- The "labels" array must have exactly the same number of entries as the input segments, in the same order."""
+
+
+def _build_diarize_user_message(segments: list[str]) -> str:
+    numbered = "\n".join(f"{i}: {text}" for i, text in enumerate(segments))
+    return f"Label each segment as doctor or patient:\n\n{numbered}"
+
+
+async def _diarize_with_llama(
+    texts: list[str],
+) -> list[str] | None:
+    """
+    Calls LLaMA to assign speaker labels to a list of transcript texts.
+    Returns a list of 'doctor'/'patient' strings in the same order,
+    or None if the call fails or returns unusable output.
+    """
+    user_message = _build_diarize_user_message(texts)
+
+    try:
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                GROQ_CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": GROQ_LLM_MODEL,
+                    "temperature": 0.1,
+                    "max_tokens": 1000,
+                    "response_format": {"type": "json_object"},
+                    "messages": [
+                        {"role": "system", "content": _DIARIZE_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_message},
+                    ],
+                },
+                timeout=30.0,
+            )
+
+        if response.status_code != 200:
+            logger.warning(
+                "[TRANSCRIPTION] LLaMA diarization API error %s: %s",
+                response.status_code,
+                response.text,
+            )
+            return None
+
+        payload = response.json()
+        raw_content = payload["choices"][0]["message"]["content"]
+        parsed = json.loads(raw_content)
+        labels: list[str] = parsed.get("labels", [])
+
+        # Validate — must be same length and only valid speaker values
+        valid = {"doctor", "patient"}
+        if len(labels) != len(texts) or not all(l in valid for l in labels):
+            logger.warning(
+                "[TRANSCRIPTION] LLaMA diarization returned unexpected labels: %s",
+                labels,
+            )
+            return None
+
+        logger.info("[TRANSCRIPTION] LLaMA diarization succeeded")
+        return labels
+
+    except Exception:
+        logger.warning(
+            "[TRANSCRIPTION] LLaMA diarization failed, will use fallback",
+            exc_info=True,
+        )
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Transcript formatting
+# ---------------------------------------------------------------------------
+
+async def _format_transcript(segments: list[dict]) -> list[dict[str, str | int]]:
+    """
+    Converts raw Whisper segments into a diarized transcript.
+    Tries LLaMA speaker labelling first; falls back to question-mark heuristic.
+    """
+    # Filter empty segments first
+    texts: list[str] = []
+    for segment in segments:
         text = (segment.get("text") or "").strip()
-        if not text:
-            continue
+        if text:
+            texts.append(text)
+
+    if not texts:
+        return []
+
+    # Attempt LLaMA diarization
+    labels = await _diarize_with_llama(texts)
+
+    if labels is None:
+        # Fallback — question-mark heuristic
+        logger.info("[TRANSCRIPTION] Using question-mark fallback for diarization")
+        labels = [_assign_speaker_fallback(text, i) for i, text in enumerate(texts)]
+
+    transcript: list[dict[str, str | int]] = []
+    for i, (text, speaker) in enumerate(zip(texts, labels)):
         transcript.append(
             {
-                "speaker": SPEAKERS[i % 2],
+                "speaker": speaker,
                 "text": text,
-                "line_index": len(transcript) + 1,
+                "line_index": i + 1,
             }
         )
+
     return transcript
 
+
+# ---------------------------------------------------------------------------
+# Groq Whisper call
+# ---------------------------------------------------------------------------
 
 async def _call_groq_whisper(
     audio_bytes: bytes,
@@ -56,7 +186,7 @@ async def _call_groq_whisper(
                     headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
                     files={"file": (filename, audio_file, content_type)},
                     data={
-                        "model": GROQ_MODEL,
+                        "model": GROQ_WHISPER_MODEL,
                         "response_format": "verbose_json",
                     },
                     timeout=120.0,
@@ -64,7 +194,7 @@ async def _call_groq_whisper(
 
         if response.status_code != 200:
             logger.error(
-                "[TRANSCRIPTION] Groq API error %s: %s",
+                "[TRANSCRIPTION] Groq Whisper API error %s: %s",
                 response.status_code,
                 response.text,
             )
@@ -79,7 +209,7 @@ async def _call_groq_whisper(
             else:
                 raise ValueError("Groq returned no transcription segments")
 
-        transcript = _format_transcript(segments)
+        transcript = await _format_transcript(segments)
         if not transcript:
             raise ValueError("No non-empty transcription segments")
         return transcript
@@ -88,6 +218,10 @@ async def _call_groq_whisper(
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
 
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
 
 async def transcribe(audio_bytes: bytes) -> list[dict[str, str | int]]:
     """Pipeline entry point: diarised transcript lines from raw audio bytes."""
