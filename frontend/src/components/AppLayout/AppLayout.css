@@ -1,0 +1,9 @@
+.app-layout {
+  min-height: 100vh;
+}
+
+.app-layout__main {
+  margin-left: 220px;
+  min-height: 100vh;
+  background: #EEF2F5;
+}

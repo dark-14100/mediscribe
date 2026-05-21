@@ -1,0 +1,67 @@
+.soap-note {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1.25rem 1.5rem;
+}
+
+.soap-note__title {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--color-text);
+  margin-bottom: 1rem;
+}
+
+.soap-note__fields {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.soap-note__field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.375rem;
+  opacity: 0.55;
+  transition: opacity 0.35s ease;
+}
+
+.soap-note__field--visible {
+  opacity: 1;
+}
+
+.soap-note__label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.soap-note__field textarea {
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-family: inherit;
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-text);
+  resize: vertical;
+  min-height: 5rem;
+}
+
+.soap-note__field--visible textarea {
+  border-color: rgba(26, 138, 122, 0.35);
+}
+
+.soap-note__field textarea:focus {
+  outline: none;
+  border-color: #1A8A7A;
+  box-shadow: 0 0 0 2px rgba(26, 138, 122, 0.12);
+}
+
+.soap-note__field textarea:disabled {
+  background: var(--color-bg);
+  cursor: wait;
+}

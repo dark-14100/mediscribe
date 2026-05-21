@@ -1,0 +1,10 @@
+This is a Vite + React 18 project.
+Language: plain JavaScript ES2022. NO TypeScript ever.
+Styling: vanilla CSS only. NO Tailwind. NO inline styles. NO CSS modules.
+Routing: react-router-dom v6. Use useNavigate not useHistory.
+State: useState and useEffect only. No Redux, no Zustand, no Context unless asked.
+API base: import.meta.env.VITE_API_URL — never hardcode URLs.
+Auth: JWT in localStorage via src/lib/auth.js — use getToken() everywhere.
+Components live in src/components/Name/Name.jsx with co-located Name.css.
+Never install new npm packages without asking first.
+Never use TypeScript syntax, type annotations, or .ts extensions.

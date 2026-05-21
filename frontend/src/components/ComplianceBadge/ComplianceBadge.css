@@ -1,0 +1,72 @@
+.compliance-badge {
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+
+.compliance-badge--pass {
+  background: var(--color-primary-light);
+  border-color: rgba(26, 138, 122, 0.3);
+}
+
+.compliance-badge--warn {
+  background: var(--color-warning-light);
+  border-color: rgba(186, 117, 23, 0.3);
+}
+
+.compliance-badge--fail {
+  background: var(--color-danger-light);
+  border-color: rgba(226, 75, 74, 0.3);
+}
+
+.compliance-badge__toggle {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.625rem 1rem;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+
+.compliance-badge--pass .compliance-badge__status {
+  color: #1A8A7A;
+}
+
+.compliance-badge--warn .compliance-badge__status {
+  color: var(--color-warning);
+}
+
+.compliance-badge--fail .compliance-badge__status {
+  color: var(--color-danger);
+}
+
+.compliance-badge__chevron {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+
+.compliance-badge__notes {
+  list-style: none;
+  padding: 0 1rem 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}
+
+.compliance-badge__notes li {
+  font-size: 0.8125rem;
+  line-height: 1.45;
+  color: var(--color-text);
+}
+
+.compliance-badge__suggestion {
+  margin-top: 0.25rem;
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
