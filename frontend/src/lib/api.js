@@ -1,4 +1,4 @@
-import { getToken } from './auth.js';
+import { clearToken, getToken } from './auth.js';
 
 export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
 
@@ -13,6 +13,16 @@ export async function apiFetch(path, options = {}) {
 
   const response = await fetch(url, { ...options, headers });
 
+  if (response.status === 401) {
+    // Token is missing, expired, or invalid — drop it so the next
+    // PrivateRoute check bounces the user to /login.
+    clearToken();
+    const error = new Error('Unauthorized');
+    error.status = 401;
+    error.response = response;
+    throw error;
+  }
+
   if (!response.ok) {
     const error = new Error(`API error: ${response.status} ${response.statusText}`);
     error.status = response.status;
@@ -21,4 +31,42 @@ export async function apiFetch(path, options = {}) {
   }
 
   return response;
+}
+
+/** Fetch the currently authenticated user, or null if not logged in. */
+export async function fetchCurrentUser() {
+  if (!getToken()) return null;
+  try {
+    const res = await apiFetch('/auth/me');
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Start a new session for a patient and return the resulting visit id.
+ *
+ * - When connected to a real backend (VITE_API_URL set and the id looks like
+ *   a real UUID, not one of the demo registry ids), POSTs to /visits.
+ * - In demo mode, returns the input id so the SessionPage can fall back to
+ *   its mock SSE simulation.
+ */
+const DEMO_REGISTRY_PREFIX = '00000000-0000-4000-8000-';
+
+export async function startSessionForPatient(patientId) {
+  const apiBase = import.meta.env.VITE_API_URL;
+  const isDemoId = !patientId || patientId.startsWith(DEMO_REGISTRY_PREFIX);
+
+  if (!apiBase || isDemoId) {
+    return patientId;
+  }
+
+  const res = await apiFetch('/visits', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ patient_id: patientId }),
+  });
+  const visit = await res.json();
+  return visit.id;
 }

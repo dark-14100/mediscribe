@@ -1,10 +1,12 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { startSessionForPatient } from '../../lib/api.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './PatientRegistry.css';
 
 export default function PatientRegistry({ filterSearch, onFilterSearchChange }) {
   const navigate = useNavigate();
+  const [openingId, setOpeningId] = useState(null);
 
   const filteredPatients = useMemo(() => {
     const query = filterSearch.trim().toLowerCase();
@@ -22,8 +24,19 @@ export default function PatientRegistry({ filterSearch, onFilterSearchChange }) 
   const hasQuery = filterSearch.trim().length > 0;
   const isEmpty = filteredPatients.length === 0;
 
-  function handleRowClick(visitId) {
-    navigate(`/session/${visitId}`);
+  async function handleRowClick(patientId) {
+    if (openingId) return;
+    setOpeningId(patientId);
+    try {
+      const visitId = await startSessionForPatient(patientId);
+      navigate(`/session/${visitId}`);
+    } catch (err) {
+      console.error('[PatientRegistry] failed to open session:', err);
+      // Fall back to the raw id so the page still loads (mock SSE will run).
+      navigate(`/session/${patientId}`);
+    } finally {
+      setOpeningId(null);
+    }
   }
 
   return (

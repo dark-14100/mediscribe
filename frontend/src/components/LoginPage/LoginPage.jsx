@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../../lib/api.js';
 import { setToken } from '../../lib/auth.js';
+import { useAuth } from '../../lib/authContext.js';
 import './LoginPage.css';
 
 const DEMO_EMAIL = 'dr.demo@medscribe.test';
@@ -77,10 +78,14 @@ function FeatureIcon({ type }) {
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const { refresh } = useAuth();
   const [email, setEmail] = useState(DEMO_EMAIL);
   const [password, setPassword] = useState(DEMO_PASSWORD);
   const [loginFailed, setLoginFailed] = useState(false);
   const [loading, setLoading] = useState(false);
+
+  const redirectTo = location.state?.from || '/dashboard';
 
   function clearLoginError() {
     setLoginFailed(false);
@@ -99,7 +104,8 @@ export default function LoginPage() {
       });
       const data = await response.json();
       setToken(data.access_token);
-      navigate('/dashboard');
+      await refresh();
+      navigate(redirectTo, { replace: true });
     } catch {
       setLoginFailed(true);
     } finally {
@@ -107,8 +113,21 @@ export default function LoginPage() {
     }
   }
 
-  function handleSkipDemo() {
-    navigate('/dashboard');
+  async function handleSkipDemo() {
+    // Demo mode: stub a token so PrivateRoute lets us through.
+    // Real JWT has 3 base64 segments — payload contains role + a far-future exp.
+    const farFuture = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365;
+    const header = btoa(JSON.stringify({ alg: 'none', typ: 'JWT' }));
+    const payload = btoa(
+      JSON.stringify({
+        sub: '00000000-0000-0000-0000-000000000000',
+        role: 'doctor',
+        exp: farFuture,
+      }),
+    );
+    setToken(`${header}.${payload}.demo`);
+    await refresh();
+    navigate('/dashboard', { replace: true });
   }
 
   return (

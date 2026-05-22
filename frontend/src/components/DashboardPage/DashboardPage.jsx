@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AppNav from '../AppNav/AppNav';
+import { startSessionForPatient } from '../../lib/api.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './DashboardPage.css';
 
@@ -55,9 +57,21 @@ function riskBadgeLabel(risk) {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const [opening, setOpening] = useState(false);
 
-  function openSession() {
-    navigate('/session/visit-6');
+  async function openSession(patientId) {
+    if (opening) return;
+    setOpening(true);
+    try {
+      const target = patientId || 'visit-6';
+      const visitId = await startSessionForPatient(target);
+      navigate(`/session/${visitId}`);
+    } catch (err) {
+      console.error('[DashboardPage] failed to open session:', err);
+      navigate('/session/visit-6');
+    } finally {
+      setOpening(false);
+    }
   }
 
   return (
@@ -119,9 +133,13 @@ export default function DashboardPage() {
                     {TRAJECTORY_LABELS[patient.trajectory]}
                   </span>
                 </div>
-                <Link to="/patients" className="dashboard-page__view-link">
+                <button
+                  type="button"
+                  className="dashboard-page__view-link"
+                  onClick={() => openSession(patient.id)}
+                >
                   View →
-                </Link>
+                </button>
               </article>
             ))}
           </div>
@@ -135,7 +153,7 @@ export default function DashboardPage() {
                 <button
                   type="button"
                   className="dashboard-page__session-row"
-                  onClick={openSession}
+                  onClick={() => openSession()}
                 >
                   <span className="dashboard-page__avatar">{session.initials}</span>
                   <span className="dashboard-page__session-info">

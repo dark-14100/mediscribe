@@ -37,7 +37,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.deps import get_current_user, require_doctor
+from api.deps import get_current_user, get_current_user_sse, require_doctor
 from core.constants import (
     EVENT_ANOMALIES_READY,
     EVENT_BIAS_READY,
@@ -206,7 +206,7 @@ async def transcribe(
 @router.get("/stream/{visit_id}")
 async def stream(
     visit_id: UUID,
-    user: Annotated[User, Depends(get_current_user)],
+    user: Annotated[User, Depends(get_current_user_sse)],
     db: Annotated[AsyncSession, Depends(get_db)],
     bus: Annotated[EventBus, Depends(get_event_bus)],
 ) -> StreamingResponse:
@@ -251,8 +251,13 @@ async def _run_pipeline(
     visit_id_str = str(visit.id)
 
     # --- Step 2: SOAP generation -----------------------------------------
+    # NB: the AI team's services/soap_generator.py exposes `generate_soap`,
+    # not `generate`. We fall back to either symbol so the route works with
+    # whichever name they decide to standardise on.
     soap_fn = _require(
-        _resolve("services.soap_generator", "generate"), "SOAP generator"
+        _resolve("services.soap_generator", "generate_soap")
+        or _resolve("services.soap_generator", "generate"),
+        "SOAP generator",
     )
     soap_note: SOAPNote = await _maybe_call(
         soap_fn, payload.transcript, default=SOAPNote(), label="soap_generator"

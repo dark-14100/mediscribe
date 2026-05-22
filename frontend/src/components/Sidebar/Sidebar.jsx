@@ -1,5 +1,5 @@
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { clearToken } from '../../lib/auth.js';
+import { useAuth } from '../../lib/authContext.js';
 import './Sidebar.css';
 
 const NAV_ITEMS = [
@@ -8,9 +8,26 @@ const NAV_ITEMS = [
   { to: '/sessions', label: 'Sessions' },
 ];
 
+function initialsFromName(name) {
+  if (!name) return 'DR';
+  const parts = name.trim().split(/\s+/);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+
+function displayName(user) {
+  if (!user?.full_name) return 'Dr. Okafor';
+  // Doctors get a "Dr." prefix if they haven't already provided one
+  if (user.role === 'doctor' && !/^dr\.?\s/i.test(user.full_name)) {
+    return `Dr. ${user.full_name.split(' ').pop()}`;
+  }
+  return user.full_name;
+}
+
 export default function Sidebar() {
   const navigate = useNavigate();
   const { pathname } = useLocation();
+  const { user, signOut } = useAuth();
 
   function isActive(path) {
     if (path === '/sessions') {
@@ -20,9 +37,12 @@ export default function Sidebar() {
   }
 
   function handleLogout() {
-    clearToken();
+    signOut();
     navigate('/login');
   }
+
+  const name = displayName(user);
+  const initials = initialsFromName(user?.full_name);
 
   return (
     <aside className="sidebar">
@@ -49,9 +69,9 @@ export default function Sidebar() {
       <div className="sidebar__footer">
         <div className="sidebar__user">
           <span className="sidebar__avatar" aria-hidden="true">
-            DR
+            {initials}
           </span>
-          <span className="sidebar__user-name">Dr. Okafor</span>
+          <span className="sidebar__user-name">{name}</span>
         </div>
         <button type="button" className="sidebar__logout" onClick={handleLogout}>
           Log out

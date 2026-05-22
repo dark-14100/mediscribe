@@ -1,10 +1,12 @@
-"""Auth routes: POST /auth/register and POST /auth/login."""
+"""Auth routes: POST /auth/register, POST /auth/login, GET /auth/me."""
 import logging
+from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.deps import get_current_user
 from core.security import create_access_token, hash_password, verify_password
 from db.session import get_db
 from models.user import User
@@ -57,3 +59,11 @@ async def login(
     token = create_access_token(subject=str(user.id), role=user.role)
     log.info("[auth] login user_id=%s", user.id)
     return Token(access_token=token, token_type="bearer")
+
+
+@router.get("/me", response_model=UserRead)
+async def me(
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """Return the currently authenticated user's profile."""
+    return user

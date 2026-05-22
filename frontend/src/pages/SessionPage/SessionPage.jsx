@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import AppNav from '../../components/AppNav/AppNav';
 import AnomalyFlag from '../../components/AnomalyFlag/AnomalyFlag';
@@ -10,6 +10,7 @@ import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPa
 import PatientCard from '../../components/PatientCard/PatientCard';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
+import { apiFetch } from '../../lib/api.js';
 import { connectSSE } from '../../lib/sse.js';
 import {
   getInitialTrajectory,
@@ -19,6 +20,8 @@ import {
 } from '../../lib/sessionMock.js';
 import './SessionPage.css';
 
+const SOAP_FIELD_ORDER = ['subjective', 'objective', 'assessment', 'plan'];
+
 const EMPTY_SOAP = {
   subjective: '',
   objective: '',
@@ -26,18 +29,29 @@ const EMPTY_SOAP = {
   plan: '',
 };
 
-const SOAP_FIELD_ORDER = ['subjective', 'objective', 'assessment', 'plan'];
+// ── helpers ────────────────────────────────────────────────────────────────
 
 function normalizeSoap(payload) {
   const note = payload?.soap_note ?? payload;
-  if (!note) {
-    return null;
-  }
+  if (!note) return null;
   return {
     subjective: note.subjective?.text ?? note.subjective ?? '',
     objective: note.objective?.text ?? note.objective ?? '',
     assessment: note.assessment?.text ?? note.assessment ?? '',
     plan: note.plan?.text ?? note.plan ?? '',
+  };
+}
+
+function soapToRequest(soap, doctorModifiedFields) {
+  const toField = (text) => ({ text: text ?? '', source_lines: [] });
+  return {
+    soap_note: {
+      subjective: toField(soap.subjective),
+      objective: toField(soap.objective),
+      assessment: toField(soap.assessment),
+      plan: toField(soap.plan),
+    },
+    doctor_modified_fields: [...doctorModifiedFields],
   };
 }
 
@@ -50,122 +64,252 @@ function staggerSoapFields(setVisibleFields, setSoap, soapData) {
   });
 }
 
+// ── component ──────────────────────────────────────────────────────────────
+
 export default function SessionPage() {
   const { visitId } = useParams();
+  const apiBase = import.meta.env.VITE_API_URL;
+  const useRealApi = Boolean(apiBase) && Boolean(visitId) && !visitId.startsWith('visit-');
+
+  // ── state ────────────────────────────────────────────────────────────────
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
+  const [cognitiveLoad, setCognitiveLoad] = useState(null); // {session_count, threshold, threshold_exceeded}
+
   const [patient] = useState(() => getSessionPatient(visitId));
   const [trajectory, setTrajectory] = useState(() => getInitialTrajectory(visitId));
+
   const [soap, setSoap] = useState(EMPTY_SOAP);
   const [visibleFields, setVisibleFields] = useState(() => new Set());
+  const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
+
   const [anomalies, setAnomalies] = useState([]);
   const [differentials, setDifferentials] = useState([]);
   const [compliance, setCompliance] = useState(null);
   const [biasFlags, setBiasFlags] = useState([]);
   const [dismissedBias, setDismissedBias] = useState(() => new Set());
 
+  const [driftFlag, setDriftFlag] = useState(null);
+
+  const [pipelineStatus, setPipelineStatus] = useState('idle');
+  // 'idle' | 'running' | 'done' | 'saving' | 'signing' | 'signed' | 'error'
+
+  const [saveError, setSaveError] = useState(null);
+  const sseRef = useRef(null);
+
+  // ── SSE event handlers ───────────────────────────────────────────────────
+
+  const sseHandlers = useRef({
+    soap_ready(event) {
+      const data = parseSSEData(event);
+      const normalized = normalizeSoap(data);
+      if (normalized) staggerSoapFields(setVisibleFields, setSoap, normalized);
+    },
+    anomalies_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.anomalies) setAnomalies(data.anomalies);
+    },
+    differentials_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.differentials) setDifferentials(data.differentials);
+    },
+    drift_ready(event) {
+      const data = parseSSEData(event);
+      // Drift influences trajectory's watch zones; we hold the raw flag in state
+      // so future UI (e.g. a watch-zone enrichment) can read it without another fetch.
+      if (data?.drift_flag !== undefined) {
+        setDriftFlag(data.drift_flag);
+      }
+    },
+    compliance_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.status) {
+        setCompliance(data);
+      } else if (data?.compliance_status) {
+        setCompliance({ status: data.compliance_status, notes: data.compliance_notes ?? [] });
+      }
+    },
+    bias_ready(event) {
+      const data = parseSSEData(event);
+      const flags = data?.bias_flags ?? data;
+      if (Array.isArray(flags)) {
+        setBiasFlags(flags.map((f, i) => ({ ...f, id: f.id ?? `bias-${i}` })));
+      }
+    },
+    trajectory_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.direction) setTrajectory(data);
+    },
+    pipeline_done() {
+      setPipelineStatus('done');
+    },
+    error(event) {
+      const data = parseSSEData(event);
+      console.error('[SessionPage] pipeline error:', data?.detail);
+      setPipelineStatus('error');
+    },
+  });
+
+  // ── cognitive load ───────────────────────────────────────────────────────
+
+  useEffect(() => {
+    if (!useRealApi) return;
+    apiFetch('/analytics/load')
+      .then((r) => r.json())
+      .then(setCognitiveLoad)
+      .catch(() => {}); // non-fatal
+  }, [useRealApi]);
+
+  // Surface drift via console for now — the visual element lives in the
+  // trajectory watch zones, so there's nothing new to render here.
+  useEffect(() => {
+    if (driftFlag) {
+      console.info('[SessionPage] drift_ready', driftFlag);
+    }
+  }, [driftFlag]);
+
+  // ── SSE connection on mount (real only) ──────────────────────────────────
+
+  useEffect(() => {
+    if (!useRealApi) {
+      // Demo mode: staggered mock events
+      const conn = simulateSessionSSE(sseHandlers.current, visitId);
+      sseRef.current = conn;
+      return () => conn.close();
+    }
+
+    const sse = connectSSE(visitId, sseHandlers.current);
+    sseRef.current = sse;
+    sse.source.onerror = () => {
+      sse.close();
+      // Fall back to mock so the demo still works
+      const conn = simulateSessionSSE(sseHandlers.current, visitId);
+      sseRef.current = conn;
+    };
+
+    return () => {
+      sse.close();
+      sseRef.current?.close?.();
+    };
+  }, [visitId, useRealApi]);
+
+  // ── transcript ready → run pipeline ─────────────────────────────────────
+
+  const handleTranscriptReady = useCallback(
+    async (transcript) => {
+      if (!useRealApi) return; // mock already simulated
+      if (!transcript?.length) return;
+
+      setPipelineStatus('running');
+      try {
+        await apiFetch('/pipeline/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visit_id: visitId, transcript }),
+        });
+        // SSE events drive the UI; pipeline_done event will flip status to 'done'
+      } catch (err) {
+        console.error('[SessionPage] pipeline/run failed:', err);
+        setPipelineStatus('error');
+      }
+    },
+    [visitId, useRealApi],
+  );
+
+  // ── SOAP edits ───────────────────────────────────────────────────────────
+
   const handleSoapChange = useCallback((key, value) => {
     setSoap((prev) => ({ ...prev, [key]: value }));
+    setDoctorModifiedFields((prev) => new Set([...prev, key]));
   }, []);
 
-  const handleAcceptBias = useCallback((id) => {
-    const flag = biasFlags.find((f) => f.id === id);
-    if (flag) {
-      setSoap((prev) => ({
-        ...prev,
-        subjective: prev.subjective.replace(flag.phrase, flag.suggested_rewrite),
-      }));
-    }
-    setDismissedBias((prev) => new Set([...prev, id]));
-  }, [biasFlags]);
+  // ── bias accept / dismiss ────────────────────────────────────────────────
+
+  const handleAcceptBias = useCallback(
+    (id) => {
+      const flag = biasFlags.find((f) => f.id === id);
+      if (flag) {
+        setSoap((prev) => {
+          const updated = { ...prev };
+          // Search all four fields — not just subjective
+          for (const field of SOAP_FIELD_ORDER) {
+            if (updated[field].includes(flag.phrase)) {
+              updated[field] = updated[field].replace(flag.phrase, flag.suggested_rewrite);
+              setDoctorModifiedFields((m) => new Set([...m, field]));
+              break;
+            }
+          }
+          return updated;
+        });
+      }
+      setDismissedBias((prev) => new Set([...prev, id]));
+    },
+    [biasFlags],
+  );
 
   const handleDismissBias = useCallback((id) => {
     setDismissedBias((prev) => new Set([...prev, id]));
   }, []);
 
-  useEffect(() => {
-    const handlers = {
-      soap_ready(event) {
-        const data = parseSSEData(event);
-        const normalized = normalizeSoap(data);
-        if (normalized) {
-          staggerSoapFields(setVisibleFields, setSoap, normalized);
-        }
-      },
-      anomalies_ready(event) {
-        const data = parseSSEData(event);
-        if (data?.anomalies) {
-          setAnomalies(data.anomalies);
-        }
-      },
-      differentials_ready(event) {
-        const data = parseSSEData(event);
-        if (data?.differentials) {
-          setDifferentials(data.differentials);
-        }
-      },
-      compliance_ready(event) {
-        const data = parseSSEData(event);
-        if (data?.status) {
-          setCompliance(data);
-        } else if (data?.compliance_status) {
-          setCompliance({
-            status: data.compliance_status,
-            notes: data.compliance_notes ?? [],
-          });
-        }
-      },
-      bias_ready(event) {
-        const data = parseSSEData(event);
-        const flags = data?.bias_flags ?? data;
-        if (Array.isArray(flags)) {
-          setBiasFlags(flags.map((f, i) => ({ ...f, id: f.id ?? `bias-${i}` })));
-        }
-      },
-      trajectory_ready(event) {
-        const data = parseSSEData(event);
-        if (data?.direction) {
-          setTrajectory(data);
-        }
-      },
-    };
+  // ── save draft ───────────────────────────────────────────────────────────
 
-    let connection = null;
-    let simStarted = false;
-    const apiBase = import.meta.env.VITE_API_URL;
+  async function handleSaveDraft() {
+    if (!useRealApi) return;
+    setSaveError(null);
+    setPipelineStatus('saving');
+    try {
+      await apiFetch(`/notes/save/${visitId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
+      });
+      setPipelineStatus('done');
+    } catch (err) {
+      console.error('[SessionPage] save failed:', err);
+      setSaveError('Failed to save — please try again.');
+      setPipelineStatus('done');
+    }
+  }
 
-    function startSimulation() {
-      if (!simStarted) {
-        simStarted = true;
-        connection = simulateSessionSSE(handlers, visitId);
+  // ── sign off ─────────────────────────────────────────────────────────────
+
+  async function handleSignOff() {
+    if (!useRealApi) return;
+    if (pipelineStatus === 'signed') return;
+    setSaveError(null);
+
+    // Save latest edits first, then sign
+    try {
+      setPipelineStatus('signing');
+      await apiFetch(`/notes/save/${visitId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
+      });
+      await apiFetch(`/notes/sign/${visitId}`, { method: 'POST' });
+      setPipelineStatus('signed');
+    } catch (err) {
+      const already = err?.status === 409;
+      if (already) {
+        setPipelineStatus('signed');
+      } else {
+        console.error('[SessionPage] sign failed:', err);
+        setSaveError('Failed to sign — please try again.');
+        setPipelineStatus('done');
       }
     }
-
-    if (apiBase && visitId) {
-      const sse = connectSSE(visitId, handlers);
-      sse.source.onerror = () => {
-        sse.close();
-        startSimulation();
-      };
-      connection = sse;
-      const fallbackTimer = setTimeout(startSimulation, 2000);
-      return () => {
-        clearTimeout(fallbackTimer);
-        sse.close();
-        connection?.close?.();
-      };
-    }
-
-    startSimulation();
-    return () => connection?.close?.();
-  }, [visitId]);
-
-  function handleSaveDraft() {
-    /* demo — wire to POST /notes/save when backend is ready */
   }
 
-  function handleSignOff() {
-    /* demo — wire to POST /notes/sign when backend is ready */
-  }
+  // ── derived ──────────────────────────────────────────────────────────────
+
+  const isSigned = pipelineStatus === 'signed';
+  const isSaving = pipelineStatus === 'saving' || pipelineStatus === 'signing';
+  const recorderDisabled = pipelineStatus === 'running' || isSaving || isSigned;
+
+  const showNudge =
+    !nudgeDismissed &&
+    (cognitiveLoad?.threshold_exceeded ?? false);
+
+  // ── render ───────────────────────────────────────────────────────────────
 
   return (
     <div className="session-page">
@@ -173,9 +317,12 @@ export default function SessionPage() {
 
       <div className="session-page__body">
         <div className="session-page__main">
-          {!nudgeDismissed ? (
-            <CognitiveLoadNudge sessionCount={6} onDismiss={() => setNudgeDismissed(true)} />
-          ) : null}
+          {showNudge && (
+            <CognitiveLoadNudge
+              sessionCount={cognitiveLoad.session_count}
+              onDismiss={() => setNudgeDismissed(true)}
+            />
+          )}
 
           <div className="session-page__cards-row">
             <PatientCard patient={patient} variant="session" />
@@ -184,19 +331,51 @@ export default function SessionPage() {
             </div>
           </div>
 
-          <AudioRecorder />
+          <AudioRecorder
+            visitId={visitId}
+            onTranscriptReady={handleTranscriptReady}
+            disabled={recorderDisabled}
+          />
 
-          <SOAPNote soap={soap} visibleFields={visibleFields} onChange={handleSoapChange} />
+          {pipelineStatus === 'running' && (
+            <p className="session-page__pipeline-status">
+              Analysing session — results streaming in…
+            </p>
+          )}
+
+          <SOAPNote
+            soap={soap}
+            visibleFields={visibleFields}
+            onChange={isSigned ? undefined : handleSoapChange}
+          />
 
           <ComplianceBadge compliance={compliance} />
 
+          {saveError && <p className="session-page__error">{saveError}</p>}
+
           <div className="session-page__actions">
-            <button type="button" className="session-page__draft" onClick={handleSaveDraft}>
-              Save Draft
-            </button>
-            <button type="button" className="session-page__sign" onClick={handleSignOff}>
-              Sign Off
-            </button>
+            {isSigned ? (
+              <span className="session-page__signed-badge">✓ Note signed</span>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="session-page__draft"
+                  onClick={handleSaveDraft}
+                  disabled={isSaving}
+                >
+                  {pipelineStatus === 'saving' ? 'Saving…' : 'Save Draft'}
+                </button>
+                <button
+                  type="button"
+                  className="session-page__sign"
+                  onClick={handleSignOff}
+                  disabled={isSaving}
+                >
+                  {pipelineStatus === 'signing' ? 'Signing…' : 'Sign Off'}
+                </button>
+              </>
+            )}
           </div>
         </div>
 

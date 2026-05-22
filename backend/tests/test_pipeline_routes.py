@@ -71,7 +71,7 @@ def ai_services_installed(monkeypatch):
     async def generate(transcript):
         return _FAKE_SOAP
 
-    async def get_summaries(soap, patient_id):
+    async def get_summaries(soap, patient_id, db):
         return ["2026-03-01: prior visit summary"]
 
     async def detect_anomaly(soap, history, meds):
@@ -176,7 +176,15 @@ async def _create_patient_and_visit(client, doctor) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_transcribe_returns_503_when_service_missing(client, doctor_user):
+async def test_transcribe_returns_503_when_service_missing(
+    client, doctor_user, monkeypatch
+):
+    # The AI team's services.transcription is now importable; simulate the
+    # "missing" state by removing the `transcribe` symbol for the duration of
+    # this test so the route's _resolve returns None.
+    import services.transcription as _trans_mod
+
+    monkeypatch.setattr(_trans_mod, "transcribe", None, raising=False)
     resp = await client.post(
         "/pipeline/transcribe",
         headers=auth_header(doctor_user),
@@ -221,7 +229,15 @@ async def test_transcribe_rejects_empty_audio(client, doctor_user):
 
 
 @pytest.mark.asyncio
-async def test_run_returns_503_when_soap_service_missing(client, doctor_user):
+async def test_run_returns_503_when_soap_service_missing(
+    client, doctor_user, monkeypatch
+):
+    # The AI team's services.soap_generator is now importable; simulate the
+    # "missing" state by clearing both symbol names the route looks up.
+    import services.soap_generator as _soap_mod
+
+    monkeypatch.setattr(_soap_mod, "generate_soap", None, raising=False)
+    monkeypatch.setattr(_soap_mod, "generate", None, raising=False)
     _, vid = await _create_patient_and_visit(client, doctor_user)
     resp = await client.post(
         "/pipeline/run",
