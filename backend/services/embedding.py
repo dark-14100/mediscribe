@@ -18,7 +18,6 @@ import asyncio
 import logging
 from uuid import UUID
 
-from sentence_transformers import SentenceTransformer
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -34,12 +33,13 @@ log = logging.getLogger("medscribe.embedding")
 # Singleton model loader
 # ---------------------------------------------------------------------------
 
-_model: SentenceTransformer | None = None
+_model = None
 
 
-def _get_model() -> SentenceTransformer:
+def _get_model():
     global _model  # noqa: PLW0603
     if _model is None:
+        from sentence_transformers import SentenceTransformer  # lazy: avoids torch DLL load at import time
         log.info("[embedding] loading model %s", settings.EMBEDDING_MODEL)
         _model = SentenceTransformer(settings.EMBEDDING_MODEL)
         log.info("[embedding] model loaded")
