@@ -9,7 +9,6 @@ const STATS = [
   { label: 'Total patients', value: '248' },
   { label: 'High-risk', value: '14', accent: 'danger' },
   { label: 'Live sessions', value: '3', accent: 'primary' },
-  { label: 'Pipeline latency', value: '142ms', accent: 'primary' },
 ];
 
 const RECENT_SESSIONS = [
