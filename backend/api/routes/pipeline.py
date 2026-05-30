@@ -57,6 +57,7 @@ from schemas.pipeline import (
     PipelinePayload,
     PipelineRunRequest,
     SOAPNote,
+    TrajectoryResult,
     TranscribeResponse,
 )
 from services.event_bus import EventBus, get_event_bus
@@ -454,5 +455,15 @@ async def run_status(
         compliance_status=visit.compliance_status,
         compliance_notes=visit.compliance_notes or [],
         bias_flags=visit.bias_flags or [],
-        trajectory=None,
+        trajectory=(
+            TrajectoryResult(
+                direction=visit.trajectory_direction,
+                score=visit.trajectory_score or 0.0,
+                confidence=0,
+                watch_zones=visit.trajectory_watch_zones or [],
+                computed_from_visits=0,
+            )
+            if visit.trajectory_direction
+            else None
+        ),
     )

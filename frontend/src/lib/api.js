@@ -1,6 +1,15 @@
 import { clearToken, getToken } from './auth.js';
 
 export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+export const DEMO_REGISTRY_PREFIX = '00000000-0000-4000-8000-';
+
+export function isDemoRegistryId(patientId) {
+  return !patientId || patientId.startsWith(DEMO_REGISTRY_PREFIX);
+}
+
+export function isDemoVisitId(visitId) {
+  return !visitId || visitId.startsWith('visit-') || visitId.startsWith(DEMO_REGISTRY_PREFIX);
+}
 
 export async function apiFetch(path, options = {}) {
   const url = `${BASE_URL}${path}`;
@@ -52,11 +61,9 @@ export async function fetchCurrentUser() {
  * - In demo mode, returns the input id so the SessionPage can fall back to
  *   its mock SSE simulation.
  */
-const DEMO_REGISTRY_PREFIX = '00000000-0000-4000-8000-';
-
 export async function startSessionForPatient(patientId) {
   const apiBase = import.meta.env.VITE_API_URL;
-  const isDemoId = !patientId || patientId.startsWith(DEMO_REGISTRY_PREFIX);
+  const isDemoId = isDemoRegistryId(patientId);
 
   if (!apiBase || isDemoId) {
     return patientId;

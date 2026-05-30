@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiFetch } from '../../lib/api.js';
+import { apiFetch, isDemoVisitId } from '../../lib/api.js';
 import './AudioRecorder.css';
 
 function formatTime(seconds) {
@@ -95,7 +95,7 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
     const apiBase = import.meta.env.VITE_API_URL;
 
     // Demo / no backend: return a placeholder so the page still works
-    if (!apiBase || !visitId || visitId.startsWith('visit-')) {
+    if (!apiBase || isDemoVisitId(visitId)) {
       setStatus('idle');
       onTranscriptReady?.([]);
       return;

@@ -10,7 +10,7 @@ import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPa
 import PatientCard from '../../components/PatientCard/PatientCard';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
-import { apiFetch } from '../../lib/api.js';
+import { apiFetch, isDemoVisitId } from '../../lib/api.js';
 import { connectSSE } from '../../lib/sse.js';
 import {
   getInitialTrajectory,
@@ -69,7 +69,7 @@ function staggerSoapFields(setVisibleFields, setSoap, soapData) {
 export default function SessionPage() {
   const { visitId } = useParams();
   const apiBase = import.meta.env.VITE_API_URL;
-  const useRealApi = Boolean(apiBase) && Boolean(visitId) && !visitId.startsWith('visit-');
+  const useRealApi = Boolean(apiBase) && Boolean(visitId) && !isDemoVisitId(visitId);
 
   // ── state ────────────────────────────────────────────────────────────────
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
@@ -137,6 +137,10 @@ export default function SessionPage() {
     },
     trajectory_ready(event) {
       const data = parseSSEData(event);
+      if (data?.trajectory) {
+        setTrajectory(data.trajectory);
+        return;
+      }
       if (data?.direction) setTrajectory(data);
     },
     pipeline_done() {

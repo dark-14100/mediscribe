@@ -95,7 +95,6 @@ const TRAJECTORY_MAP = {
 };
 
 function registryToPatient(registryRow) {
-  const age = parseInt(registryRow.ageGender, 10);
   const genderChar = registryRow.ageGender.slice(-1);
   const gender = genderChar === 'F' ? 'female' : genderChar === 'M' ? 'male' : registryRow.ageGender;
 
