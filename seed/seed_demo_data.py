@@ -53,7 +53,7 @@ log = logging.getLogger("seed")
 # Demo identities
 # ---------------------------------------------------------------------------
 
-DEMO_EMAIL = "dr.demo@medscribe.test"
+DEMO_EMAIL = "dr.demo@example.com"
 DEMO_PASSWORD = "demo1234"  # noqa: S105 — well-known demo credential
 DEMO_DOCTOR_NAME = "Dr. Sasha Demo"
 

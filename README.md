@@ -127,7 +127,7 @@ The script is **idempotent** — running it again wipes the prior demo doctor
 
 | Demo identity | Value |
 |---|---|
-| Doctor email | `dr.demo@medscribe.test` |
+| Doctor email | `dr.demo@example.com` |
 | Doctor password | `demo1234` |
 | Patient name | `Maria Hernandez` (58F, HTN + T2DM) |
 | Visits | 6 across ~130 days, progressively worsening |

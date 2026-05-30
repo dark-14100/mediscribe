@@ -180,40 +180,6 @@
   cursor: not-allowed;
 }
 
-.login-page__demo-hint {
-  margin-top: 1.5rem;
-  font-size: 0.8125rem;
-  color: var(--color-text-muted);
-  line-height: 1.5;
-}
-
-.login-page__demo-hint code {
-  font-family: ui-monospace, monospace;
-  font-size: 0.75rem;
-  background: var(--color-bg);
-  padding: 0.125rem 0.375rem;
-  border-radius: var(--radius-sm);
-}
-
-.login-page__skip {
-  display: inline-block;
-  margin-top: 1.25rem;
-  padding: 0;
-  border: none;
-  background: none;
-  font-family: inherit;
-  font-size: 0.9375rem;
-  font-weight: 500;
-  color: #1A8A7A;
-  cursor: pointer;
-  text-decoration: none;
-}
-
-.login-page__skip:hover {
-  color: var(--color-primary-accent);
-  text-decoration: underline;
-}
-
 @media (max-width: 768px) {
   .login-page {
     flex-direction: column;

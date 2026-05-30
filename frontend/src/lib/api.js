@@ -42,11 +42,52 @@ export async function apiFetch(path, options = {}) {
   return response;
 }
 
+/**
+ * Sign in without the global 401 handler (wrong password is expected here).
+ * @throws {Error} with `code` of 'network' | 'credentials' | 'server'
+ */
+export async function login(email, password) {
+  const url = `${BASE_URL}/auth/login`;
+  const normalizedEmail = email.trim().toLowerCase();
+  let response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: normalizedEmail, password }),
+    });
+  } catch {
+    const error = new Error('Cannot reach API');
+    error.code = 'network';
+    throw error;
+  }
+
+  if (response.status === 401) {
+    const error = new Error('Invalid credentials');
+    error.code = 'credentials';
+    throw error;
+  }
+
+  if (!response.ok) {
+    const error = new Error(`API error: ${response.status}`);
+    error.code = 'server';
+    error.status = response.status;
+    throw error;
+  }
+
+  return response.json();
+}
+
 /** Fetch the currently authenticated user, or null if not logged in. */
 export async function fetchCurrentUser() {
-  if (!getToken()) return null;
+  const token = getToken();
+  if (!token) return null;
+  const url = `${BASE_URL}/auth/me`;
   try {
-    const res = await apiFetch('/auth/me');
+    const res = await fetch(url, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) return null;
     return await res.json();
   } catch {
     return null;

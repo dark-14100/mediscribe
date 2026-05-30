@@ -14,10 +14,8 @@ import { AuthContext } from './authContext.js';
 async function resolveUser() {
   if (!isAuthenticated()) return null;
 
-  if (import.meta.env.VITE_API_URL) {
-    const fetched = await fetchCurrentUser();
-    if (fetched) return fetched;
-  }
+  const fetched = await fetchCurrentUser();
+  if (fetched) return fetched;
 
   const payload = decodeToken(getToken());
   if (!payload) return null;
@@ -25,7 +23,7 @@ async function resolveUser() {
     id: payload.sub,
     role: payload.role,
     full_name: 'Demo User',
-    email: 'demo@medscribe.test',
+    email: 'dr.demo@example.com',
   };
 }
 

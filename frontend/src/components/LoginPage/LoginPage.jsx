@@ -1,12 +1,16 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { apiFetch } from '../../lib/api.js';
+import { login as apiLogin } from '../../lib/api.js';
 import { setToken } from '../../lib/auth.js';
 import { useAuth } from '../../lib/authContext.js';
 import './LoginPage.css';
 
-const DEMO_EMAIL = 'dr.demo@medscribe.test';
-const DEMO_PASSWORD = 'demo1234';
+const LOGIN_ERRORS = {
+  network:
+    "Can't reach the server. Confirm the API is running and VITE_API_URL points to your Railway backend.",
+  credentials: 'Email or password is incorrect.',
+  server: 'Something went wrong on the server. Try again in a moment.',
+};
 
 const FEATURES = [
   { label: 'Live SOAP', icon: 'soap' },
@@ -80,54 +84,35 @@ export default function LoginPage() {
   const navigate = useNavigate();
   const location = useLocation();
   const { refresh } = useAuth();
-  const [email, setEmail] = useState(DEMO_EMAIL);
-  const [password, setPassword] = useState(DEMO_PASSWORD);
-  const [loginFailed, setLoginFailed] = useState(false);
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
 
   const redirectTo = location.state?.from || '/dashboard';
 
   function clearLoginError() {
-    setLoginFailed(false);
+    setErrorMessage('');
   }
 
   async function handleSubmit(event) {
     event.preventDefault();
-    setLoginFailed(false);
+    setErrorMessage('');
     setLoading(true);
 
     try {
-      const response = await apiFetch('/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-      const data = await response.json();
+      const data = await apiLogin(email, password);
       setToken(data.access_token);
       await refresh();
       navigate(redirectTo, { replace: true });
-    } catch {
-      setLoginFailed(true);
+    } catch (err) {
+      const code = err?.code === 'credentials' || err?.code === 'network' || err?.code === 'server'
+        ? err.code
+        : 'server';
+      setErrorMessage(LOGIN_ERRORS[code]);
     } finally {
       setLoading(false);
     }
-  }
-
-  async function handleSkipDemo() {
-    // Demo mode: stub a token so PrivateRoute lets us through.
-    // Real JWT has 3 base64 segments — payload contains role + a far-future exp.
-    const farFuture = Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 365;
-    const header = btoa(JSON.stringify({ alg: 'none', typ: 'JWT' }));
-    const payload = btoa(
-      JSON.stringify({
-        sub: '00000000-0000-0000-0000-000000000000',
-        role: 'doctor',
-        exp: farFuture,
-      }),
-    );
-    setToken(`${header}.${payload}.demo`);
-    await refresh();
-    navigate('/dashboard', { replace: true });
   }
 
   return (
@@ -164,9 +149,16 @@ export default function LoginPage() {
           </header>
 
           <form className="login-page__form" onSubmit={handleSubmit}>
-            {loginFailed ? (
+            {errorMessage ? (
               <p className="login-page__error" role="alert">
-                Invalid credentials. Use the demo account or check your API connection.
+                {errorMessage}
+              </p>
+            ) : null}
+
+            {!import.meta.env.VITE_API_URL ? (
+              <p className="login-page__error" role="alert">
+                API URL is not configured. Set VITE_API_URL on Vercel to your Railway backend and
+                redeploy.
               </p>
             ) : null}
 
@@ -208,18 +200,6 @@ export default function LoginPage() {
               {loading ? 'Signing in…' : 'Sign In'}
             </button>
           </form>
-
-          <p className="login-page__demo-hint">
-            Demo: <code>{DEMO_EMAIL}</code> / <code>{DEMO_PASSWORD}</code>
-          </p>
-
-          <button
-            type="button"
-            className="login-page__skip"
-            onClick={handleSkipDemo}
-          >
-            Skip to dashboard →
-          </button>
         </div>
       </section>
     </div>

@@ -186,7 +186,7 @@ DATABASE_URL="postgresql+asyncpg://..." REDIS_URL="rediss://..." \
 ```
 
 This creates:
-- **Doctor:** `dr.demo@medscribe.test` / `demo1234`
+- **Doctor:** `dr.demo@example.com` / `demo1234`
 - **Patient:** Maria Hernandez (6 visits, declining trajectory — demo-ready)
 
 Re-running wipes the prior demo data and recreates everything fresh.
