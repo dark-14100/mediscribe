@@ -2,7 +2,11 @@
 import uuid
 from datetime import date, datetime
 
-from pydantic import BaseModel, ConfigDict, Field
+from typing import Any
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from schemas.coercion import coerce_str_list
 
 
 class PatientCreate(BaseModel):
@@ -25,6 +29,11 @@ class PatientRead(BaseModel):
     active_medications: list[str]
     created_at: datetime
 
+    @field_validator("allergies", "active_medications", mode="before")
+    @classmethod
+    def _coerce_str_lists(cls, value: Any) -> list[str]:
+        return coerce_str_list(value)
+
 
 class PatientSummary(BaseModel):
     """Cached at-a-glance card returned by GET /patients/{id}/summary."""
@@ -38,3 +47,8 @@ class PatientSummary(BaseModel):
     active_medications: list[str] = Field(default_factory=list)
     trajectory_direction: str | None = None
     trajectory_confidence: int | None = None
+
+    @field_validator("allergies", "active_medications", mode="before")
+    @classmethod
+    def _coerce_str_lists(cls, value: Any) -> list[str]:
+        return coerce_str_list(value)

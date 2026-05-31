@@ -10,7 +10,13 @@ import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPa
 import PatientCard from '../../components/PatientCard/PatientCard';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
-import { apiFetch, fetchPatientSummary, fetchVisit, isDemoVisitId } from '../../lib/api.js';
+import {
+  apiFetch,
+  fetchPatientSummary,
+  fetchVisit,
+  isDemoVisitId,
+  readApiError,
+} from '../../lib/api.js';
 import { connectSSE } from '../../lib/sse.js';
 import {
   getInitialTrajectory,
@@ -201,7 +207,17 @@ export default function SessionPage() {
       } catch (err) {
         console.error('[SessionPage] failed to load visit:', err);
         if (!cancelled) {
-          setSessionLoadError('Could not load this session from the server.');
+          let message = 'Could not load this session from the server.';
+          if (err?.response) {
+            try {
+              message = await readApiError(err.response);
+            } catch {
+              // keep default
+            }
+          } else if (err?.status === 401) {
+            message = 'Session expired. Sign in again.';
+          }
+          setSessionLoadError(message);
           setPatient(null);
         }
       } finally {

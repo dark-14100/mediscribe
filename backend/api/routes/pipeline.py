@@ -142,6 +142,28 @@ def _serialise(value: Any) -> Any:
     return value
 
 
+def _as_json_list(value: Any) -> list[Any]:
+    """Persist only list-shaped JSONB; never write ``{}`` for list columns."""
+    serialized = _serialise(value)
+    if serialized is None:
+        return []
+    if isinstance(serialized, list):
+        return serialized
+    if isinstance(serialized, dict):
+        return []
+    return [serialized]
+
+
+def _as_str_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if isinstance(value, dict):
+        return []
+    return [str(value)]
+
+
 # ---------------------------------------------------------------------------
 # POST /pipeline/transcribe
 # ---------------------------------------------------------------------------
@@ -379,16 +401,16 @@ async def _run_pipeline(
 
     # --- Final: persist everything to the visit row ----------------------
     visit.soap_note = soap_note.model_dump(mode="json")
-    visit.anomalies = _serialise(anomalies) or []
-    visit.differentials = _serialise(differentials) or []
+    visit.anomalies = _as_json_list(anomalies)
+    visit.differentials = _as_json_list(differentials)
     visit.drift_flag = _serialise(drift_flag)
     visit.compliance_status = compliance_status
-    visit.compliance_notes = compliance_notes or []
-    visit.bias_flags = _serialise(bias_flags) or []
+    visit.compliance_notes = _as_json_list(compliance_notes)
+    visit.bias_flags = _as_json_list(bias_flags)
     if trajectory_result is not None:
         visit.trajectory_score = getattr(trajectory_result, "score", None)
         visit.trajectory_direction = getattr(trajectory_result, "direction", None)
-        visit.trajectory_watch_zones = list(
+        visit.trajectory_watch_zones = _as_str_list(
             getattr(trajectory_result, "watch_zones", []) or []
         )
     visit.raw_transcript = "\n".join(

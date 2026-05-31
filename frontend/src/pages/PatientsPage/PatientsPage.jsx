@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import AddPatientModal from '../../components/AddPatientModal/AddPatientModal';
 import AppNav from '../../components/AppNav/AppNav';
 import PatientRegistry from '../../components/PatientRegistry/PatientRegistry';
-import { createPatient, fetchPatients } from '../../lib/api.js';
+import { createPatient, fetchPatients, readApiError } from '../../lib/api.js';
 import { buildPatientFromForm, mapApiPatientToRow } from '../../lib/buildPatient.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './PatientsPage.css';
@@ -22,9 +22,27 @@ export default function PatientsPage() {
     setLoadError('');
     try {
       const rows = await fetchPatients();
-      setPatients(rows.map(mapApiPatientToRow));
-    } catch {
-      setLoadError('Could not load patients from the API.');
+      const mapped = [];
+      for (const row of rows) {
+        try {
+          mapped.push(mapApiPatientToRow(row));
+        } catch (mapErr) {
+          console.warn('[PatientsPage] skip invalid patient row', row?.id, mapErr);
+        }
+      }
+      setPatients(mapped);
+    } catch (err) {
+      let message = 'Could not load patients from the API.';
+      if (err?.response) {
+        try {
+          message = await readApiError(err.response);
+        } catch {
+          // keep default
+        }
+      } else if (err?.status === 401) {
+        message = 'Session expired. Sign in again.';
+      }
+      setLoadError(message);
     } finally {
       setLoading(false);
     }

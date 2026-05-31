@@ -3,8 +3,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from schemas.coercion import coerce_json_list, coerce_str_list
 from schemas.pipeline import SOAPNote
 
 
@@ -55,3 +56,19 @@ class VisitRead(BaseModel):
     is_signed: bool = False
     signed_at: datetime | None = None
     created_at: datetime
+
+    @field_validator(
+        "anomalies",
+        "differentials",
+        "compliance_notes",
+        "bias_flags",
+        mode="before",
+    )
+    @classmethod
+    def _coerce_list_fields(cls, value: Any) -> list[Any]:
+        return coerce_json_list(value)
+
+    @field_validator("trajectory_watch_zones", mode="before")
+    @classmethod
+    def _coerce_watch_zones(cls, value: Any) -> list[str]:
+        return coerce_str_list(value)
