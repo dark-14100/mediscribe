@@ -1,0 +1,18 @@
+---
+description: Commit and push to origin after completing code changes
+alwaysApply: true
+---
+
+# Auto commit and push
+
+After you finish a set of code changes for the user (bug fix, feature, refactor):
+
+1. Run `git status` and `git diff` to review what will be committed.
+2. Do **not** commit secrets (`.env`, credentials, API keys) or files the user asked to keep local-only.
+3. Stage only relevant files, write a concise commit message (1–2 sentences, focus on why).
+4. Commit, then **`git push origin`** on the current branch (use `-u` if the branch has no upstream).
+5. Briefly tell the user the commit hash and that the push succeeded (or report push errors).
+
+Do not ask permission to commit/push unless the user explicitly says not to for that task.
+
+If there are no changes to commit, skip commit/push.
