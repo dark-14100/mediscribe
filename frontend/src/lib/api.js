@@ -16,6 +16,21 @@ export function isDemoVisitId(visitId) {
   return !visitId || visitId.startsWith('visit-') || visitId.startsWith(DEMO_REGISTRY_PREFIX);
 }
 
+/** Read FastAPI ``detail`` (string or validation array) from a failed response. */
+export async function readApiError(response) {
+  try {
+    const body = await response.json();
+    const detail = body?.detail;
+    if (typeof detail === 'string') return detail;
+    if (Array.isArray(detail) && detail[0]?.msg) {
+      return detail.map((d) => d.msg).join('; ');
+    }
+  } catch {
+    // ignore
+  }
+  return response.statusText || 'Request failed';
+}
+
 export async function apiFetch(path, options = {}) {
   const url = `${BASE_URL}${path}`;
   const headers = { ...options.headers };
@@ -131,15 +146,19 @@ export async function fetchPatientVisits(patientId) {
 export async function fetchAllDoctorVisits() {
   const patients = await fetchPatients();
   const lists = await Promise.all(
-    patients.map((p) =>
-      fetchPatientVisits(p.id).then((visits) =>
-        visits.map((v) => ({
+    patients.map(async (p) => {
+      try {
+        const visits = await fetchPatientVisits(p.id);
+        return visits.map((v) => ({
           ...v,
           patient_name: p.full_name,
           patient_gender: p.gender,
-        })),
-      ),
-    ),
+        }));
+      } catch (err) {
+        console.warn('[api] visits for patient failed', p.id, err);
+        return [];
+      }
+    }),
   );
   return lists
     .flat()

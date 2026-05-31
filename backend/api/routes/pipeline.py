@@ -30,6 +30,7 @@ from fastapi import (
     File,
     HTTPException,
     Path,
+    Query,
     UploadFile,
     status,
 )
@@ -60,6 +61,7 @@ from schemas.pipeline import (
     TrajectoryResult,
     TranscribeResponse,
 )
+from core.config import settings
 from services.event_bus import EventBus, get_event_bus
 
 log = logging.getLogger("medscribe.pipeline")
@@ -150,7 +152,7 @@ async def transcribe(
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     audio: UploadFile = File(...),
-    visit_id: UUID | None = None,
+    visit_id: Annotated[UUID | None, Query()] = None,
 ) -> TranscribeResponse:
     """Step 1 of the pipeline.
 
@@ -166,13 +168,30 @@ async def transcribe(
     if visit_id is not None:
         await _load_my_visit(visit_id, user, db)
 
+    if not settings.GROQ_API_KEY:
+        raise HTTPException(
+            status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="GROQ_API_KEY is not configured on the server.",
+        )
+
     transcribe_fn = _require(
         _resolve("services.transcription", "transcribe"),
         "Transcription service",
     )
-    transcript = await _maybe_call(
-        transcribe_fn, audio_bytes, default=[], label="transcription"
-    )
+    try:
+        transcript = await transcribe_fn(audio_bytes)
+    except Exception as exc:
+        log.exception("[pipeline] transcription failed")
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=f"Transcription failed: {exc}",
+        ) from exc
+
+    if not transcript:
+        raise HTTPException(
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No speech detected in the recording. Try speaking longer or check your microphone.",
+        )
 
     # Fire-and-forget audio upload via Celery.
     audio_upload_queued = False

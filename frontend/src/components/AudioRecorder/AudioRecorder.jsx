@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { apiFetch, isDemoVisitId } from '../../lib/api.js';
+import { apiFetch, isDemoVisitId, readApiError } from '../../lib/api.js';
 import './AudioRecorder.css';
 
 function formatTime(seconds) {
@@ -26,6 +26,7 @@ const STATUS_LABEL = {
 export default function AudioRecorder({ visitId, onTranscriptReady, disabled = false }) {
   const [status, setStatus] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
+  const [errorMessage, setErrorMessage] = useState('');
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
@@ -93,6 +94,13 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
   async function handleTranscribe(chunks, mimeType) {
     const blob = new Blob(chunks, { type: mimeType });
     const apiBase = import.meta.env.VITE_API_URL;
+    setErrorMessage('');
+
+    if (blob.size < 1000) {
+      setStatus('error');
+      setErrorMessage('Recording too short. Hold the mic and speak for at least 3–5 seconds.');
+      return;
+    }
 
     // Demo / no backend: return a placeholder so the page still works
     if (!apiBase || isDemoVisitId(visitId)) {
@@ -108,12 +116,23 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
       const url = `/pipeline/transcribe?visit_id=${encodeURIComponent(visitId)}`;
       const response = await apiFetch(url, { method: 'POST', body: form });
       const data = await response.json();
+      const transcript = data.transcript ?? [];
 
       setStatus('idle');
-      onTranscriptReady?.(data.transcript ?? []);
+      if (!transcript.length) {
+        setStatus('error');
+        setErrorMessage('No speech detected. Try again with a longer recording.');
+        return;
+      }
+      onTranscriptReady?.(transcript);
     } catch (err) {
       console.error('[AudioRecorder] transcription failed:', err);
       setStatus('error');
+      if (err?.response) {
+        setErrorMessage(await readApiError(err.response));
+      } else {
+        setErrorMessage('Could not reach the transcription API.');
+      }
     }
   }
 
@@ -161,7 +180,9 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
         </button>
 
         <div className="audio-recorder__meta">
-          <span className="audio-recorder__label">{STATUS_LABEL[status]}</span>
+          <span className="audio-recorder__label">
+            {errorMessage || STATUS_LABEL[status]}
+          </span>
           <span className="audio-recorder__timer">{isRecording ? formatTime(elapsed) : ''}</span>
         </div>
 

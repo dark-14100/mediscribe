@@ -47,14 +47,16 @@ export default function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const [apiPatients, visits] = await Promise.all([
-          fetchPatients(),
-          fetchAllDoctorVisits(),
-        ]);
+        const apiPatients = await fetchPatients();
         if (cancelled) return;
-        const rows = apiPatients.map(mapApiPatientToRow);
-        setPatients(rows);
-        setRecentVisits(visits.slice(0, 5));
+        setPatients(apiPatients.map(mapApiPatientToRow));
+
+        try {
+          const visits = await fetchAllDoctorVisits();
+          if (!cancelled) setRecentVisits(visits.slice(0, 5));
+        } catch (visitErr) {
+          console.warn('[DashboardPage] visits load failed:', visitErr);
+        }
       } catch (err) {
         console.error('[DashboardPage] load failed:', err);
         if (!cancelled) setLoadError('Could not load dashboard data from the API.');

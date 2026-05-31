@@ -76,9 +76,13 @@ export default function SessionPage() {
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [cognitiveLoad, setCognitiveLoad] = useState(null); // {session_count, threshold, threshold_exceeded}
 
-  const [patient, setPatient] = useState(() => getSessionPatient(visitId));
-  const [trajectory, setTrajectory] = useState(() => getInitialTrajectory(visitId));
+  const [patient, setPatient] = useState(() => (useRealApi ? null : getSessionPatient(visitId)));
+  const [trajectory, setTrajectory] = useState(() =>
+    useRealApi ? null : getInitialTrajectory(visitId),
+  );
+  const [sessionLoading, setSessionLoading] = useState(useRealApi);
   const [sessionLoadError, setSessionLoadError] = useState(null);
+  const [transcriptError, setTranscriptError] = useState(null);
 
   const [soap, setSoap] = useState(EMPTY_SOAP);
   const [visibleFields, setVisibleFields] = useState(() => new Set());
@@ -163,6 +167,7 @@ export default function SessionPage() {
     let cancelled = false;
     (async () => {
       setSessionLoadError(null);
+      setSessionLoading(true);
       try {
         const visit = await fetchVisit(visitId);
         if (cancelled) return;
@@ -172,7 +177,7 @@ export default function SessionPage() {
 
         setPatient(mapSummaryToPatientCard(summary, visit));
         const traj = mapVisitToTrajectory(visit, summary);
-        if (traj) setTrajectory(traj);
+        setTrajectory(traj);
 
         const existingSoap = normalizeSoap({ soap_note: visit.soap_note });
         if (existingSoap) {
@@ -197,7 +202,10 @@ export default function SessionPage() {
         console.error('[SessionPage] failed to load visit:', err);
         if (!cancelled) {
           setSessionLoadError('Could not load this session from the server.');
+          setPatient(null);
         }
+      } finally {
+        if (!cancelled) setSessionLoading(false);
       }
     })();
 
@@ -258,7 +266,13 @@ export default function SessionPage() {
   const handleTranscriptReady = useCallback(
     async (transcript) => {
       if (!useRealApi) return; // mock already simulated
-      if (!transcript?.length) return;
+      setTranscriptError(null);
+      if (!transcript?.length) {
+        setTranscriptError(
+          'No transcript returned. Check GROQ_API_KEY on Railway and speak for at least a few seconds.',
+        );
+        return;
+      }
 
       setPipelineStatus('running');
       try {
@@ -391,8 +405,16 @@ export default function SessionPage() {
             </p>
           ) : null}
 
+          {sessionLoading ? (
+            <p className="session-page__pipeline-status">Loading session…</p>
+          ) : null}
+
           <div className="session-page__cards-row">
-            <PatientCard patient={patient} variant="session" />
+            {patient ? (
+              <PatientCard patient={patient} variant="session" />
+            ) : (
+              <p className="session-page__panel-empty">Patient data unavailable</p>
+            )}
             <div className="session-page__trajectory-wrap">
               <TrajectoryCard trajectory={trajectory} />
             </div>
@@ -401,8 +423,14 @@ export default function SessionPage() {
           <AudioRecorder
             visitId={visitId}
             onTranscriptReady={handleTranscriptReady}
-            disabled={recorderDisabled}
+            disabled={recorderDisabled || sessionLoading || !patient}
           />
+
+          {transcriptError ? (
+            <p className="session-page__error" role="alert">
+              {transcriptError}
+            </p>
+          ) : null}
 
           {pipelineStatus === 'running' && (
             <p className="session-page__pipeline-status">
