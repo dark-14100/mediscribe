@@ -13,6 +13,7 @@ export default function PatientRegistry({
 }) {
   const navigate = useNavigate();
   const [openingId, setOpeningId] = useState(null);
+  const [openError, setOpenError] = useState('');
   const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
   const filteredPatients = useMemo(
@@ -28,12 +29,13 @@ export default function PatientRegistry({
   async function handleRowClick(patientId) {
     if (openingId) return;
     setOpeningId(patientId);
+    setOpenError('');
     try {
       const visitId = await startSessionForPatient(patientId);
       navigate(`/session/${visitId}`);
     } catch (err) {
       console.error('[PatientRegistry] failed to open session:', err);
-      navigate(`/session/${patientId}`);
+      setOpenError('Could not start a session. Check that you are signed in and the API is reachable.');
     } finally {
       setOpeningId(null);
     }
@@ -55,13 +57,26 @@ export default function PatientRegistry({
           onChange={(e) => onFilterSearchChange(e.target.value)}
           aria-label="Filter patients"
         />
-        <button type="button" className="registry-page__filters-btn">
-          Filters · {activeFilterCount}
-        </button>
+        {!import.meta.env.VITE_API_URL ? (
+          <button
+            type="button"
+            className="registry-page__filters-btn"
+            disabled
+            title="Advanced filters coming soon"
+          >
+            Filters · {activeFilterCount}
+          </button>
+        ) : null}
         <button type="button" className="registry-page__add-btn" onClick={onOpenAddModal}>
           + Add patient
         </button>
       </div>
+
+      {openError ? (
+        <p className="registry-table__empty" role="alert">
+          {openError}
+        </p>
+      ) : null}
 
       <div className="registry-table-wrap">
         {loading ? (

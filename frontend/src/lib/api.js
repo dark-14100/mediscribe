@@ -106,6 +106,46 @@ export async function fetchCurrentUser() {
   }
 }
 
+/** List patients for the logged-in doctor (empty array if none). */
+export async function fetchPatients() {
+  const res = await apiFetch('/patients');
+  return res.json();
+}
+
+export async function fetchVisit(visitId) {
+  const res = await apiFetch(`/visits/${visitId}`);
+  return res.json();
+}
+
+export async function fetchPatientSummary(patientId) {
+  const res = await apiFetch(`/patients/${patientId}/summary`);
+  return res.json();
+}
+
+export async function fetchPatientVisits(patientId) {
+  const res = await apiFetch(`/visits/patient/${patientId}`);
+  return res.json();
+}
+
+/** All visits for the current doctor (via each patient). */
+export async function fetchAllDoctorVisits() {
+  const patients = await fetchPatients();
+  const lists = await Promise.all(
+    patients.map((p) =>
+      fetchPatientVisits(p.id).then((visits) =>
+        visits.map((v) => ({
+          ...v,
+          patient_name: p.full_name,
+          patient_gender: p.gender,
+        })),
+      ),
+    ),
+  );
+  return lists
+    .flat()
+    .sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+}
+
 /**
  * Start a new session for a patient and return the resulting visit id.
  *
@@ -114,11 +154,6 @@ export async function fetchCurrentUser() {
  * - In demo mode, returns the input id so the SessionPage can fall back to
  *   its mock SSE simulation.
  */
-/** List patients for the logged-in doctor (empty array if none). */
-export async function fetchPatients() {
-  const res = await apiFetch('/patients');
-  return res.json();
-}
 
 /** Create a patient on the backend; returns PatientRead JSON. */
 export async function createPatient(payload) {

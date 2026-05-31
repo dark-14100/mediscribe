@@ -119,6 +119,12 @@
   padding: 0.25rem 0;
 }
 
+.session-page__demo-hint {
+  font-size: 0.875rem;
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
 .session-page__error {
   font-size: 0.875rem;
   color: var(--color-danger);

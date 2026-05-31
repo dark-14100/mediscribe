@@ -10,7 +10,7 @@ import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPa
 import PatientCard from '../../components/PatientCard/PatientCard';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
-import { apiFetch, isDemoVisitId } from '../../lib/api.js';
+import { apiFetch, fetchPatientSummary, fetchVisit, isDemoVisitId } from '../../lib/api.js';
 import { connectSSE } from '../../lib/sse.js';
 import {
   getInitialTrajectory,
@@ -18,6 +18,7 @@ import {
   parseSSEData,
   simulateSessionSSE,
 } from '../../lib/sessionMock.js';
+import { mapSummaryToPatientCard, mapVisitToTrajectory } from '../../lib/sessionPatient.js';
 import './SessionPage.css';
 
 const SOAP_FIELD_ORDER = ['subjective', 'objective', 'assessment', 'plan'];
@@ -75,8 +76,9 @@ export default function SessionPage() {
   const [nudgeDismissed, setNudgeDismissed] = useState(false);
   const [cognitiveLoad, setCognitiveLoad] = useState(null); // {session_count, threshold, threshold_exceeded}
 
-  const [patient] = useState(() => getSessionPatient(visitId));
+  const [patient, setPatient] = useState(() => getSessionPatient(visitId));
   const [trajectory, setTrajectory] = useState(() => getInitialTrajectory(visitId));
+  const [sessionLoadError, setSessionLoadError] = useState(null);
 
   const [soap, setSoap] = useState(EMPTY_SOAP);
   const [visibleFields, setVisibleFields] = useState(() => new Set());
@@ -153,6 +155,57 @@ export default function SessionPage() {
     },
   });
 
+  // ── load visit + patient from API ────────────────────────────────────────
+
+  useEffect(() => {
+    if (!useRealApi || !visitId) return;
+
+    let cancelled = false;
+    (async () => {
+      setSessionLoadError(null);
+      try {
+        const visit = await fetchVisit(visitId);
+        if (cancelled) return;
+
+        const summary = await fetchPatientSummary(visit.patient_id);
+        if (cancelled) return;
+
+        setPatient(mapSummaryToPatientCard(summary, visit));
+        const traj = mapVisitToTrajectory(visit, summary);
+        if (traj) setTrajectory(traj);
+
+        const existingSoap = normalizeSoap({ soap_note: visit.soap_note });
+        if (existingSoap) {
+          setSoap(existingSoap);
+          setVisibleFields(new Set(SOAP_FIELD_ORDER));
+        }
+
+        if (visit.anomalies?.length) setAnomalies(visit.anomalies);
+        if (visit.differentials?.length) setDifferentials(visit.differentials);
+        if (visit.compliance_status) {
+          setCompliance({
+            status: visit.compliance_status,
+            notes: visit.compliance_notes ?? [],
+          });
+        }
+        if (visit.bias_flags?.length) {
+          setBiasFlags(visit.bias_flags.map((f, i) => ({ ...f, id: f.id ?? `bias-${i}` })));
+        }
+        if (visit.is_signed) setPipelineStatus('signed');
+        else if (existingSoap) setPipelineStatus('done');
+      } catch (err) {
+        console.error('[SessionPage] failed to load visit:', err);
+        if (!cancelled) {
+          setSessionLoadError('Could not load this session from the server.');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [visitId, useRealApi]);
+
   // ── cognitive load ───────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -184,10 +237,14 @@ export default function SessionPage() {
     const sse = connectSSE(visitId, sseHandlers.current);
     sseRef.current = sse;
     sse.source.onerror = () => {
+      console.error('[SessionPage] SSE connection failed');
       sse.close();
-      // Fall back to mock so the demo still works
-      const conn = simulateSessionSSE(sseHandlers.current, visitId);
-      sseRef.current = conn;
+      if (!import.meta.env.PROD) {
+        const conn = simulateSessionSSE(sseHandlers.current, visitId);
+        sseRef.current = conn;
+      } else {
+        setPipelineStatus('error');
+      }
     };
 
     return () => {
@@ -328,6 +385,12 @@ export default function SessionPage() {
             />
           )}
 
+          {sessionLoadError ? (
+            <p className="session-page__error" role="alert">
+              {sessionLoadError}
+            </p>
+          ) : null}
+
           <div className="session-page__cards-row">
             <PatientCard patient={patient} variant="session" />
             <div className="session-page__trajectory-wrap">
@@ -360,6 +423,10 @@ export default function SessionPage() {
           <div className="session-page__actions">
             {isSigned ? (
               <span className="session-page__signed-badge">✓ Note signed</span>
+            ) : !useRealApi ? (
+              <p className="session-page__demo-hint">
+                Demo session: connect the API and open a real visit to save or sign notes.
+              </p>
             ) : (
               <>
                 <button

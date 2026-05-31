@@ -7,3 +7,12 @@
   min-height: 100vh;
   background: #EEF2F5;
 }
+
+.private-route-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  font-size: 0.9375rem;
+  color: var(--color-text-muted);
+}
