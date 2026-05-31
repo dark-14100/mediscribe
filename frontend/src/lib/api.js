@@ -127,9 +127,21 @@ export async function fetchPatients() {
   return res.json();
 }
 
-export async function fetchVisit(visitId) {
-  const res = await apiFetch(`/visits/${visitId}`);
-  return res.json();
+export async function fetchVisit(visitId, { retries = 2 } = {}) {
+  let lastError;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      const res = await apiFetch(`/visits/${visitId}`);
+      return res.json();
+    } catch (err) {
+      lastError = err;
+      if (attempt >= retries || err.status !== 500) {
+        throw err;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError;
 }
 
 export async function fetchPatient(patientId) {
@@ -143,8 +155,16 @@ export async function fetchPatientSummary(patientId) {
 }
 
 export async function fetchPatientVisits(patientId) {
-  const res = await apiFetch(`/visits/patient/${patientId}`);
-  return res.json();
+  try {
+    const res = await apiFetch(`/visits/patient/${patientId}`);
+    return res.json();
+  } catch (err) {
+    if (err.status === 500) {
+      console.warn('[api] visit list failed for patient', patientId, err);
+      return [];
+    }
+    throw err;
+  }
 }
 
 /** All visits for the current doctor (via each patient). */

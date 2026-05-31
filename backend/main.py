@@ -4,6 +4,7 @@ This file owns: app construction, middleware, exception handlers, and router
 registration. No business logic lives here.
 """
 import logging
+import os
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
@@ -51,7 +52,11 @@ def create_app() -> FastAPI:
 
     @app.get("/healthz", tags=["meta"])
     async def health() -> dict[str, str]:
-        return {"status": "ok", "service": "medscribe-api"}
+        return {
+            "status": "ok",
+            "service": "medscribe-api",
+            "commit": (os.getenv("RAILWAY_GIT_COMMIT_SHA") or "local")[:12],
+        }
 
     @app.exception_handler(ResponseValidationError)
     async def response_validation_handler(

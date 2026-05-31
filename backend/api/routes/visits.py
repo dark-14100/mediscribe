@@ -5,6 +5,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
+from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,6 +16,7 @@ from models.patient import Patient
 from models.user import User
 from models.visit import Visit
 from schemas.visit import VisitCreate, VisitRead
+from services.visit_normalize import normalize_visit
 
 log = logging.getLogger("medscribe.visits")
 router = APIRouter(prefix="/visits", tags=["visits"])
@@ -45,6 +47,7 @@ async def _load_owned_visit(
     visit = await db.scalar(stmt)
     if visit is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    normalize_visit(visit)
     return visit
 
 
@@ -79,6 +82,7 @@ async def create_visit(
 
     await db.commit()
     await db.refresh(visit)
+    normalize_visit(visit)
     log.info(
         "[visits] created visit_id=%s patient_id=%s doctor_id=%s "
         "session_count_today=%d",
@@ -115,7 +119,18 @@ async def list_patient_visits(
         .offset(offset)
     )
     result = await db.scalars(stmt)
-    return [VisitRead.model_validate(v) for v in result.all()]
+    rows: list[VisitRead] = []
+    for visit in result.all():
+        normalize_visit(visit)
+        try:
+            rows.append(VisitRead.model_validate(visit))
+        except ValidationError:
+            log.exception(
+                "[visits] skipping corrupt visit_id=%s patient_id=%s",
+                visit.id,
+                visit.patient_id,
+            )
+    return rows
 
 
 @router.get("/{visit_id}", response_model=VisitRead)
@@ -125,4 +140,11 @@ async def get_visit(
     db: Annotated[AsyncSession, Depends(get_db)],
 ) -> VisitRead:
     visit = await _load_owned_visit(visit_id, user, db)
-    return VisitRead.model_validate(visit)
+    try:
+        return VisitRead.model_validate(visit)
+    except ValidationError as exc:
+        log.exception("[visits] get_visit validation failed visit_id=%s", visit_id)
+        raise HTTPException(
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Visit data is corrupted; contact support or start a new session.",
+        ) from exc
