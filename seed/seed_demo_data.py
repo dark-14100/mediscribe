@@ -34,9 +34,8 @@ from pathlib import Path
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_REPO_ROOT / "backend"))
 
+import bcrypt  # noqa: E402
 from sqlalchemy import delete, select  # noqa: E402
-
-from core.security import hash_password  # noqa: E402
 from db.session import AsyncSessionLocal, engine  # noqa: E402
 from models.patient import Patient  # noqa: E402
 from models.user import User  # noqa: E402
@@ -47,6 +46,14 @@ logging.basicConfig(
     level=logging.INFO, format="[seed] %(message)s", stream=sys.stdout
 )
 log = logging.getLogger("seed")
+
+
+def _demo_password_hash(plain_password: str) -> str:
+    """Hash with bcrypt directly so seed runs outside passlib/bcrypt version quirks."""
+    return bcrypt.hashpw(
+        plain_password.encode("utf-8"),
+        bcrypt.gensalt(rounds=12),
+    ).decode("utf-8")
 
 
 # ---------------------------------------------------------------------------
@@ -616,7 +623,7 @@ async def seed() -> dict:
         doctor = User(
             id=uuid.uuid4(),
             email=DEMO_EMAIL,
-            hashed_password=hash_password(DEMO_PASSWORD),
+            hashed_password=_demo_password_hash(DEMO_PASSWORD),
             full_name=DEMO_DOCTOR_NAME,
             role="doctor",
             session_count_today=6,

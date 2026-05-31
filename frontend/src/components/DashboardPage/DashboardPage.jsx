@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AppNav from '../AppNav/AppNav';
-import { fetchAllDoctorVisits, fetchPatients, startSessionForPatient } from '../../lib/api.js';
-import { getInitials, mapApiPatientToRow } from '../../lib/buildPatient.js';
+import JudgeDemoBanner from '../JudgeDemoBanner/JudgeDemoBanner.jsx';
+import { fetchAllDoctorVisits, fetchPatientsEnriched, startSessionForPatient } from '../../lib/api.js';
+import { getInitials, sortPatientsForDisplay } from '../../lib/buildPatient.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './DashboardPage.css';
 
@@ -47,9 +48,9 @@ export default function DashboardPage() {
     let cancelled = false;
     (async () => {
       try {
-        const apiPatients = await fetchPatients();
+        const enriched = await fetchPatientsEnriched();
         if (cancelled) return;
-        setPatients(apiPatients.map(mapApiPatientToRow));
+        setPatients(enriched);
 
         try {
           const visits = await fetchAllDoctorVisits();
@@ -81,7 +82,7 @@ export default function DashboardPage() {
       ];
 
   const activePatients = USE_API
-    ? patients.slice(0, 3)
+    ? sortPatientsForDisplay(patients).slice(0, 3)
     : REGISTRY_PATIENTS.filter((p) => p.risk === 'high').slice(0, 3);
 
   async function openSessionForPatientId(patientId) {
@@ -117,6 +118,8 @@ export default function DashboardPage() {
             {loadError}
           </p>
         ) : null}
+
+        {USE_API ? <JudgeDemoBanner patients={patients} /> : null}
 
         <div className="dashboard-page__stats">
           {stats.map((stat) => (

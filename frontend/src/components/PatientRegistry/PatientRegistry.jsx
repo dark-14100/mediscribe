@@ -57,16 +57,41 @@ export default function PatientRegistry({
           onChange={(e) => onFilterSearchChange(e.target.value)}
           aria-label="Filter patients"
         />
-        {!import.meta.env.VITE_API_URL ? (
+        {import.meta.env.VITE_API_URL ? (
+          <>
+            <select
+              className="registry-page__filter-select"
+              value={filters.risk}
+              onChange={(e) => setFilters((f) => ({ ...f, risk: e.target.value }))}
+              aria-label="Filter by risk"
+            >
+              <option value="all">All risks</option>
+              <option value="high">High risk</option>
+              <option value="moderate">Moderate</option>
+              <option value="low">Low</option>
+            </select>
+            <select
+              className="registry-page__filter-select"
+              value={filters.trajectory}
+              onChange={(e) => setFilters((f) => ({ ...f, trajectory: e.target.value }))}
+              aria-label="Filter by trajectory"
+            >
+              <option value="all">All trajectories</option>
+              <option value="declining">Declining</option>
+              <option value="stable">Stable</option>
+              <option value="improving">Improving</option>
+            </select>
+          </>
+        ) : (
           <button
             type="button"
             className="registry-page__filters-btn"
             disabled
-            title="Advanced filters coming soon"
+            title="Advanced filters in demo mode only"
           >
             Filters · {activeFilterCount}
           </button>
-        ) : null}
+        )}
         <button type="button" className="registry-page__add-btn" onClick={onOpenAddModal}>
           + Add patient
         </button>
@@ -104,7 +129,7 @@ export default function PatientRegistry({
               {filteredPatients.map((patient) => (
                 <tr
                   key={patient.id}
-                  className="registry-table__row"
+                  className={`registry-table__row${patient.isDemoHighlight ? ' registry-table__row--demo' : ''}`}
                   onClick={() => handleRowClick(patient.id)}
                   tabIndex={0}
                   onKeyDown={(e) => {

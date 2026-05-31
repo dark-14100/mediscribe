@@ -1,4 +1,5 @@
 import { clearToken, getToken } from './auth.js';
+import { mapApiPatientToRow, sortPatientsForDisplay } from './buildPatient.js';
 
 function normalizeBaseUrl(raw) {
   const base = (raw || 'http://localhost:8000').trim();
@@ -144,6 +145,23 @@ export async function fetchCurrentUser() {
 export async function fetchPatients() {
   const res = await apiFetch('/patients', {}, { retries: 2 });
   return res.json();
+}
+
+/** Patients plus per-patient summary (trajectory, visit count, last seen). */
+export async function fetchPatientsEnriched() {
+  const patients = await fetchPatients();
+  const rows = await Promise.all(
+    patients.map(async (patient) => {
+      try {
+        const summary = await fetchPatientSummary(patient.id);
+        return mapApiPatientToRow(patient, summary);
+      } catch (err) {
+        console.warn('[api] summary failed for patient', patient.id, err);
+        return mapApiPatientToRow(patient);
+      }
+    }),
+  );
+  return sortPatientsForDisplay(rows);
 }
 
 export async function fetchVisit(visitId) {

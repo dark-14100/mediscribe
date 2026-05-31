@@ -25,6 +25,7 @@ import {
   parseSSEData,
   simulateSessionSSE,
 } from '../../lib/sessionMock.js';
+import { JUDGE_DEMO_PATIENT_NAME } from '../../lib/buildPatient.js';
 import {
   mapPatientReadToSummary,
   mapSummaryToPatientCard,
@@ -357,16 +358,26 @@ export default function SessionPage() {
 
   // ── save draft ───────────────────────────────────────────────────────────
 
+  function applyComplianceFromVisit(visit) {
+    if (!visit?.compliance_status) return;
+    setCompliance({
+      status: visit.compliance_status,
+      notes: visit.compliance_notes ?? [],
+    });
+  }
+
   async function handleSaveDraft() {
     if (!useRealApi) return;
     setSaveError(null);
     setPipelineStatus('saving');
     try {
-      await apiFetch(`/notes/save/${visitId}`, {
+      const res = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
       });
+      const saved = await res.json();
+      applyComplianceFromVisit(saved);
       setPipelineStatus('done');
     } catch (err) {
       console.error('[SessionPage] save failed:', err);
@@ -385,11 +396,13 @@ export default function SessionPage() {
     // Save latest edits first, then sign
     try {
       setPipelineStatus('signing');
-      await apiFetch(`/notes/save/${visitId}`, {
+      const saveRes = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
       });
+      const saved = await saveRes.json();
+      applyComplianceFromVisit(saved);
       await apiFetch(`/notes/sign/${visitId}`, { method: 'POST' });
       setPipelineStatus('signed');
     } catch (err) {
@@ -475,6 +488,15 @@ export default function SessionPage() {
           />
 
           <ComplianceBadge compliance={compliance} />
+
+          {useRealApi &&
+          patient?.name === JUDGE_DEMO_PATIENT_NAME &&
+          compliance?.status === 'fail' ? (
+            <p className="session-page__demo-hint" role="note">
+              Judge tip: fill in Assessment and Plan with clinical detail, then Save Draft — compliance
+              re-runs on save.
+            </p>
+          ) : null}
 
           {saveError && <p className="session-page__error">{saveError}</p>}
 

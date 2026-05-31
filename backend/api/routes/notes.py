@@ -19,6 +19,8 @@ from models.user import User
 from models.visit import Visit
 from schemas.visit import NoteSaveRequest, NoteSignResponse, VisitRead
 from services.cache import CacheClient, get_cache, patient_summary_key
+from services.compliance import check as compliance_check
+from services.visit_normalize import normalize_visit
 
 log = logging.getLogger("medscribe.notes")
 router = APIRouter(prefix="/notes", tags=["notes"])
@@ -56,10 +58,11 @@ async def save_note(
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     cache: Annotated[CacheClient, Depends(get_cache)],
-) -> Visit:
+) -> VisitRead:
     """Persist the doctor's SOAP note (and audit trail) to the visit row.
 
     Signed notes are immutable — returns 409 on further save attempts.
+    Re-runs compliance on the edited note so the UI badge updates after save.
     """
     visit = await _load_my_visit(visit_id, user, db)
 
@@ -79,8 +82,26 @@ async def save_note(
         trail["doctor_modified_fields"] = payload.doctor_modified_fields
         visit.soap_audit_trail = trail
 
+    try:
+        compliance = await compliance_check(payload.soap_note)
+        visit.compliance_status = compliance.status
+        visit.compliance_notes = [
+            n.model_dump(mode="json") for n in compliance.notes
+        ]
+        log.info(
+            "[notes] compliance after save visit_id=%s status=%s notes=%d",
+            visit.id,
+            compliance.status,
+            len(compliance.notes),
+        )
+    except Exception:
+        log.exception(
+            "[notes] compliance check failed on save visit_id=%s", visit_id
+        )
+
     await db.commit()
     await db.refresh(visit)
+    normalize_visit(visit)
 
     # Invalidate the cached patient summary (its trajectory/medications may have moved).
     await cache.invalidate(patient_summary_key(visit.patient_id))
@@ -94,7 +115,7 @@ async def save_note(
         user.id,
         payload.doctor_modified_fields,
     )
-    return visit
+    return VisitRead.model_validate(visit)
 
 
 @router.post("/sign/{visit_id}", response_model=NoteSignResponse)

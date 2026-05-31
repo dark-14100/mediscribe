@@ -2,7 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import AddPatientModal from '../../components/AddPatientModal/AddPatientModal';
 import AppNav from '../../components/AppNav/AppNav';
 import PatientRegistry from '../../components/PatientRegistry/PatientRegistry';
-import { createPatient, fetchPatients, readApiError } from '../../lib/api.js';
+import JudgeDemoBanner from '../../components/JudgeDemoBanner/JudgeDemoBanner.jsx';
+import { createPatient, fetchPatientsEnriched, readApiError } from '../../lib/api.js';
 import { buildPatientFromForm, mapApiPatientToRow } from '../../lib/buildPatient.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './PatientsPage.css';
@@ -21,16 +22,7 @@ export default function PatientsPage() {
     setLoading(true);
     setLoadError('');
     try {
-      const rows = await fetchPatients();
-      const mapped = [];
-      for (const row of rows) {
-        try {
-          mapped.push(mapApiPatientToRow(row));
-        } catch (mapErr) {
-          console.warn('[PatientsPage] skip invalid patient row', row?.id, mapErr);
-        }
-      }
-      setPatients(mapped);
+      setPatients(await fetchPatientsEnriched());
     } catch (err) {
       let message = 'Could not load patients from the API.';
       if (err?.response) {
@@ -84,6 +76,7 @@ export default function PatientsPage() {
             {loadError}
           </p>
         ) : null}
+        {USE_API ? <JudgeDemoBanner patients={patients} /> : null}
         <PatientRegistry
           patients={patients}
           loading={loading}

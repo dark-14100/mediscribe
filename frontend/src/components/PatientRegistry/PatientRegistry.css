@@ -66,6 +66,16 @@
   color: var(--color-primary);
 }
 
+.registry-page__filter-select {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-family: inherit;
+  font-size: 0.875rem;
+  color: var(--color-text);
+}
+
 .registry-filters__dropdown {
   position: absolute;
   top: calc(100% + 0.5rem);
@@ -187,6 +197,15 @@
 
 .registry-table__row:last-child {
   border-bottom: none;
+}
+
+.registry-table__row--demo {
+  background: #eff6ff;
+}
+
+.registry-table__row--demo:hover,
+.registry-table__row--demo:focus {
+  background: #dbeafe;
 }
 
 .registry-table__row:hover,

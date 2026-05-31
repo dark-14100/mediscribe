@@ -1,0 +1,60 @@
+.judge-demo-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 16px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #eff6ff 0%, #f0fdf4 100%);
+  border: 1px solid #bfdbfe;
+}
+
+.judge-demo-banner--muted {
+  background: #f8fafc;
+  border-color: #e2e8f0;
+  color: #475569;
+  font-size: 0.9rem;
+}
+
+.judge-demo-banner__text {
+  flex: 1;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.9rem;
+  color: #334155;
+}
+
+.judge-demo-banner__text strong {
+  color: #0f172a;
+  font-size: 0.95rem;
+}
+
+.judge-demo-banner__btn {
+  padding: 8px 14px;
+  border: none;
+  border-radius: 8px;
+  background: #1d4ed8;
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+
+.judge-demo-banner__btn:hover:not(:disabled) {
+  background: #1e40af;
+}
+
+.judge-demo-banner__btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.judge-demo-banner__error {
+  width: 100%;
+  margin: 0;
+  font-size: 0.85rem;
+  color: #b91c1c;
+}
