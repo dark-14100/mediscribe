@@ -1,9 +1,16 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AppNav from '../AppNav/AppNav';
-import JudgeDemoBanner from '../JudgeDemoBanner/JudgeDemoBanner.jsx';
-import { fetchAllDoctorVisits, fetchPatientsEnriched, startSessionForPatient } from '../../lib/api.js';
-import { getInitials, sortPatientsForDisplay } from '../../lib/buildPatient.js';
+import { useAuth } from '../../lib/authContext.js';
+import {
+  enrichPatientRows,
+  fetchAllDoctorVisits,
+  fetchPatients,
+  formatApiLoadError,
+  mapPatientsToRows,
+  startSessionForPatient,
+} from '../../lib/api.js';
+import { getInitials } from '../../lib/buildPatient.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './DashboardPage.css';
 
@@ -38,29 +45,49 @@ function formatTimeAgo(iso) {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [opening, setOpening] = useState(false);
   const [patients, setPatients] = useState(USE_API ? [] : REGISTRY_PATIENTS);
   const [recentVisits, setRecentVisits] = useState([]);
   const [loadError, setLoadError] = useState('');
+  const [loading, setLoading] = useState(USE_API);
 
   useEffect(() => {
     if (!USE_API) return;
     let cancelled = false;
     (async () => {
+      setLoading(true);
+      setLoadError('');
       try {
-        const enriched = await fetchPatientsEnriched();
+        const raw = await fetchPatients();
         if (cancelled) return;
-        setPatients(enriched);
+        setPatients(mapPatientsToRows(raw));
+        setLoading(false);
 
-        try {
-          const visits = await fetchAllDoctorVisits();
-          if (!cancelled) setRecentVisits(visits.slice(0, 5));
-        } catch (visitErr) {
-          console.warn('[DashboardPage] visits load failed:', visitErr);
-        }
+        enrichPatientRows(raw)
+          .then((enriched) => {
+            if (!cancelled) setPatients(enriched);
+          })
+          .catch((err) => console.warn('[DashboardPage] enrich failed:', err));
+
+        fetchAllDoctorVisits()
+          .then((visits) => {
+            if (!cancelled) setRecentVisits(visits.slice(0, 5));
+          })
+          .catch((err) => console.warn('[DashboardPage] visits load failed:', err));
       } catch (err) {
         console.error('[DashboardPage] load failed:', err);
-        if (!cancelled) setLoadError('Could not load dashboard data from the API.');
+        if (!cancelled) {
+          if (err?.status === 401) {
+            signOut();
+            navigate('/login', { replace: true });
+            return;
+          }
+          setLoadError(
+            await formatApiLoadError(err, 'Could not load patients. Try signing in again.'),
+          );
+          setLoading(false);
+        }
       }
     })();
     return () => {
@@ -82,7 +109,7 @@ export default function DashboardPage() {
       ];
 
   const activePatients = USE_API
-    ? sortPatientsForDisplay(patients).slice(0, 3)
+    ? patients.slice(0, 3)
     : REGISTRY_PATIENTS.filter((p) => p.risk === 'high').slice(0, 3);
 
   async function openSessionForPatientId(patientId) {
@@ -119,8 +146,6 @@ export default function DashboardPage() {
           </p>
         ) : null}
 
-        {USE_API ? <JudgeDemoBanner patients={patients} /> : null}
-
         <div className="dashboard-page__stats">
           {stats.map((stat) => (
             <div
@@ -147,9 +172,11 @@ export default function DashboardPage() {
 
         <section className="dashboard-page__section">
           <h2 className="dashboard-page__section-title">Active patients</h2>
-          {activePatients.length === 0 ? (
+          {loading ? (
+            <p className="dashboard-page__empty">Loading patients…</p>
+          ) : activePatients.length === 0 && !loadError ? (
             <p className="dashboard-page__empty">No patients yet. Add one from the registry.</p>
-          ) : (
+          ) : activePatients.length === 0 ? null : (
             <div className="dashboard-page__active-row">
               {activePatients.map((patient) => (
                 <article key={patient.id} className="dashboard-page__active-card">

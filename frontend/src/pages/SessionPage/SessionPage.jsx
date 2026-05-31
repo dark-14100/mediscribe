@@ -25,7 +25,6 @@ import {
   parseSSEData,
   simulateSessionSSE,
 } from '../../lib/sessionMock.js';
-import { JUDGE_DEMO_PATIENT_NAME } from '../../lib/buildPatient.js';
 import {
   mapPatientReadToSummary,
   mapSummaryToPatientCard,
@@ -488,15 +487,6 @@ export default function SessionPage() {
           />
 
           <ComplianceBadge compliance={compliance} />
-
-          {useRealApi &&
-          patient?.name === JUDGE_DEMO_PATIENT_NAME &&
-          compliance?.status === 'fail' ? (
-            <p className="session-page__demo-hint" role="note">
-              Judge tip: fill in Assessment and Plan with clinical detail, then Save Draft — compliance
-              re-runs on save.
-            </p>
-          ) : null}
 
           {saveError && <p className="session-page__error">{saveError}</p>}
 

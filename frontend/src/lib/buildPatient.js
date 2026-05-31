@@ -1,5 +1,3 @@
-export const JUDGE_DEMO_PATIENT_NAME = 'Maria Hernandez';
-
 export function getInitials(fullName) {
   return fullName
     .trim()
@@ -51,10 +49,6 @@ export function formatLastSeenFromDates(dates) {
   return `${days}d ago`;
 }
 
-export function isJudgeDemoPatient(fullName) {
-  return fullName?.trim() === JUDGE_DEMO_PATIENT_NAME;
-}
-
 export function buildPatientFromForm(form) {
   return {
     id: crypto.randomUUID(),
@@ -67,7 +61,6 @@ export function buildPatientFromForm(form) {
     risk: 'low',
     visits: 0,
     lastSeen: 'Just now',
-    isDemoHighlight: false,
   };
 }
 
@@ -95,16 +88,13 @@ export function mapApiPatientToRow(patient, summary = null) {
     risk,
     visits,
     lastSeen,
-    isDemoHighlight: isJudgeDemoPatient(patient.full_name),
   };
 }
 
-/** Demo patient first, then highest risk. */
+/** Highest risk first, then name. */
 export function sortPatientsForDisplay(patients) {
   const riskOrder = { high: 0, moderate: 1, low: 2 };
   return [...patients].sort((a, b) => {
-    if (a.isDemoHighlight && !b.isDemoHighlight) return -1;
-    if (b.isDemoHighlight && !a.isDemoHighlight) return 1;
     const riskDiff = (riskOrder[a.risk] ?? 3) - (riskOrder[b.risk] ?? 3);
     if (riskDiff !== 0) return riskDiff;
     return a.name.localeCompare(b.name);

@@ -129,7 +129,7 @@ export default function PatientRegistry({
               {filteredPatients.map((patient) => (
                 <tr
                   key={patient.id}
-                  className={`registry-table__row${patient.isDemoHighlight ? ' registry-table__row--demo' : ''}`}
+                  className="registry-table__row"
                   onClick={() => handleRowClick(patient.id)}
                   tabIndex={0}
                   onKeyDown={(e) => {

@@ -1,9 +1,16 @@
 import { useCallback, useEffect, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../../lib/authContext.js';
 import AddPatientModal from '../../components/AddPatientModal/AddPatientModal';
 import AppNav from '../../components/AppNav/AppNav';
 import PatientRegistry from '../../components/PatientRegistry/PatientRegistry';
-import JudgeDemoBanner from '../../components/JudgeDemoBanner/JudgeDemoBanner.jsx';
-import { createPatient, fetchPatientsEnriched, readApiError } from '../../lib/api.js';
+import {
+  createPatient,
+  enrichPatientRows,
+  fetchPatients,
+  formatApiLoadError,
+  mapPatientsToRows,
+} from '../../lib/api.js';
 import { buildPatientFromForm, mapApiPatientToRow } from '../../lib/buildPatient.js';
 import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
 import './PatientsPage.css';
@@ -11,6 +18,8 @@ import './PatientsPage.css';
 const USE_API = Boolean(import.meta.env.VITE_API_URL);
 
 export default function PatientsPage() {
+  const navigate = useNavigate();
+  const { signOut } = useAuth();
   const [patients, setPatients] = useState(USE_API ? [] : REGISTRY_PATIENTS);
   const [filterSearch, setFilterSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -22,19 +31,21 @@ export default function PatientsPage() {
     setLoading(true);
     setLoadError('');
     try {
-      setPatients(await fetchPatientsEnriched());
-    } catch (err) {
-      let message = 'Could not load patients from the API.';
-      if (err?.response) {
-        try {
-          message = await readApiError(err.response);
-        } catch {
-          // keep default
-        }
-      } else if (err?.status === 401) {
-        message = 'Session expired. Sign in again.';
+      const raw = await fetchPatients();
+      setPatients(mapPatientsToRows(raw));
+      setLoading(false);
+      try {
+        setPatients(await enrichPatientRows(raw));
+      } catch (enrichErr) {
+        console.warn('[PatientsPage] enrich failed:', enrichErr);
       }
-      setLoadError(message);
+    } catch (err) {
+      if (err?.status === 401) {
+        signOut();
+        navigate('/login', { replace: true });
+        return;
+      }
+      setLoadError(await formatApiLoadError(err, 'Could not load patients. Try signing in again.'));
     } finally {
       setLoading(false);
     }
@@ -76,7 +87,6 @@ export default function PatientsPage() {
             {loadError}
           </p>
         ) : null}
-        {USE_API ? <JudgeDemoBanner patients={patients} /> : null}
         <PatientRegistry
           patients={patients}
           loading={loading}

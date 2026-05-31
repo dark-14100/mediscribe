@@ -147,9 +147,13 @@ export async function fetchPatients() {
   return res.json();
 }
 
-/** Patients plus per-patient summary (trajectory, visit count, last seen). */
-export async function fetchPatientsEnriched() {
-  const patients = await fetchPatients();
+/** Map API patient rows without summary (fast path for first paint). */
+export function mapPatientsToRows(patients) {
+  return sortPatientsForDisplay(patients.map((p) => mapApiPatientToRow(p)));
+}
+
+/** Add trajectory / visit metadata; never throws — falls back per patient. */
+export async function enrichPatientRows(patients) {
   const rows = await Promise.all(
     patients.map(async (patient) => {
       try {
@@ -162,6 +166,28 @@ export async function fetchPatientsEnriched() {
     }),
   );
   return sortPatientsForDisplay(rows);
+}
+
+/** Patients plus per-patient summary (trajectory, visit count, last seen). */
+export async function fetchPatientsEnriched() {
+  const patients = await fetchPatients();
+  return enrichPatientRows(patients);
+}
+
+/** User-facing message for a failed patient/dashboard load. */
+export async function formatApiLoadError(err, fallback) {
+  if (err?.status === 401) return 'Session expired. Sign in again.';
+  if (err?.response) {
+    try {
+      return await readApiError(err.response);
+    } catch {
+      // keep fallback
+    }
+  }
+  if (err?.message?.includes('Failed to fetch') || err?.code === 'network') {
+    return 'Cannot reach the API. Check your connection and try again.';
+  }
+  return fallback;
 }
 
 export async function fetchVisit(visitId) {

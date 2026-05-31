@@ -199,15 +199,6 @@
   border-bottom: none;
 }
 
-.registry-table__row--demo {
-  background: #eff6ff;
-}
-
-.registry-table__row--demo:hover,
-.registry-table__row--demo:focus {
-  background: #dbeafe;
-}
-
 .registry-table__row:hover,
 .registry-table__row:focus {
   background: rgba(26, 138, 122, 0.04);
