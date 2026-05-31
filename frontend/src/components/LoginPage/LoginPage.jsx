@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { login as apiLogin } from '../../lib/api.js';
+import { BASE_URL, login as apiLogin } from '../../lib/api.js';
 import { setToken } from '../../lib/auth.js';
 import { useAuth } from '../../lib/authContext.js';
 import './LoginPage.css';
@@ -9,6 +9,8 @@ const LOGIN_ERRORS = {
   network:
     "Can't reach the server. Confirm the API is running and VITE_API_URL points to your Railway backend.",
   credentials: 'Email or password is incorrect.',
+  notfound:
+    'API returned 404. On Vercel, set VITE_API_URL to your Railway URL (e.g. https://mediscribe-production-88bd.up.railway.app), not the Vercel site URL, then redeploy.',
   server: 'Something went wrong on the server. Try again in a moment.',
 };
 
@@ -106,9 +108,13 @@ export default function LoginPage() {
       await refresh();
       navigate(redirectTo, { replace: true });
     } catch (err) {
-      const code = err?.code === 'credentials' || err?.code === 'network' || err?.code === 'server'
-        ? err.code
-        : 'server';
+      const code =
+        err?.code === 'credentials' ||
+        err?.code === 'network' ||
+        err?.code === 'notfound' ||
+        err?.code === 'server'
+          ? err.code
+          : 'server';
       setErrorMessage(LOGIN_ERRORS[code]);
     } finally {
       setLoading(false);
@@ -160,7 +166,11 @@ export default function LoginPage() {
                 API URL is not configured. Set VITE_API_URL on Vercel to your Railway backend and
                 redeploy.
               </p>
-            ) : null}
+            ) : (
+              <p className="login-page__api-hint">
+                API: {BASE_URL}
+              </p>
+            )}
 
             <label className="login-page__field">
               <span>Email</span>

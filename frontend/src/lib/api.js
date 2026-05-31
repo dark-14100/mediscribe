@@ -1,6 +1,11 @@
 import { clearToken, getToken } from './auth.js';
 
-export const BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+function normalizeBaseUrl(raw) {
+  const base = (raw || 'http://localhost:8000').trim();
+  return base.replace(/\/+$/, '');
+}
+
+export const BASE_URL = normalizeBaseUrl(import.meta.env.VITE_API_URL);
 export const DEMO_REGISTRY_PREFIX = '00000000-0000-4000-8000-';
 
 export function isDemoRegistryId(patientId) {
@@ -65,6 +70,13 @@ export async function login(email, password) {
   if (response.status === 401) {
     const error = new Error('Invalid credentials');
     error.code = 'credentials';
+    throw error;
+  }
+
+  if (response.status === 404) {
+    const error = new Error('API route not found');
+    error.code = 'notfound';
+    error.status = 404;
     throw error;
   }
 

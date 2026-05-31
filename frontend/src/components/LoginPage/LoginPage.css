@@ -180,6 +180,13 @@
   cursor: not-allowed;
 }
 
+.login-page__api-hint {
+  margin-top: 1rem;
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  word-break: break-all;
+}
+
 @media (max-width: 768px) {
   .login-page {
     flex-direction: column;
