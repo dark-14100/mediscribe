@@ -5,7 +5,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from schemas.coercion import coerce_json_list, coerce_str_list
+from schemas.coercion import (
+    coerce_json_dict,
+    coerce_json_list,
+    coerce_optional_json_dict,
+    coerce_str_list,
+)
 from schemas.pipeline import SOAPNote
 
 
@@ -72,3 +77,13 @@ class VisitRead(BaseModel):
     @classmethod
     def _coerce_watch_zones(cls, value: Any) -> list[str]:
         return coerce_str_list(value)
+
+    @field_validator("soap_note", "soap_audit_trail", mode="before")
+    @classmethod
+    def _coerce_dict_fields(cls, value: Any) -> dict[str, Any]:
+        return coerce_json_dict(value)
+
+    @field_validator("drift_flag", mode="before")
+    @classmethod
+    def _coerce_drift_flag(cls, value: Any) -> dict[str, Any] | None:
+        return coerce_optional_json_dict(value)

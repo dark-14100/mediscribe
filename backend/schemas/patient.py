@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from schemas.coercion import coerce_str_list
+from schemas.coercion import coerce_json_list, coerce_optional_int, coerce_str_list
 
 
 class PatientCreate(BaseModel):
@@ -52,3 +52,13 @@ class PatientSummary(BaseModel):
     @classmethod
     def _coerce_str_lists(cls, value: Any) -> list[str]:
         return coerce_str_list(value)
+
+    @field_validator("last_visit_dates", mode="before")
+    @classmethod
+    def _coerce_visit_dates(cls, value: Any) -> list[Any]:
+        return coerce_json_list(value)
+
+    @field_validator("trajectory_confidence", mode="before")
+    @classmethod
+    def _coerce_trajectory_confidence(cls, value: Any) -> int | None:
+        return coerce_optional_int(value)

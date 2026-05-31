@@ -1,5 +1,20 @@
 /** Map API patient summary + visit into shapes used by PatientCard / TrajectoryCard. */
 
+/** Fallback when GET /summary fails but GET /patients/:id succeeds. */
+export function mapPatientReadToSummary(patient) {
+  return {
+    id: patient.id,
+    full_name: patient.full_name,
+    dob: patient.dob,
+    gender: patient.gender,
+    last_visit_dates: [],
+    allergies: patient.allergies || [],
+    active_medications: patient.active_medications || [],
+    trajectory_direction: null,
+    trajectory_confidence: null,
+  };
+}
+
 export function mapSummaryToPatientCard(summary, visit = null) {
   const meds = summary.active_medications || [];
   const visitCount = Math.max(summary.last_visit_dates?.length ?? 0, visit ? 1 : 0);

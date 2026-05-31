@@ -12,6 +12,7 @@ import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
 import {
   apiFetch,
+  fetchPatient,
   fetchPatientSummary,
   fetchVisit,
   isDemoVisitId,
@@ -24,7 +25,11 @@ import {
   parseSSEData,
   simulateSessionSSE,
 } from '../../lib/sessionMock.js';
-import { mapSummaryToPatientCard, mapVisitToTrajectory } from '../../lib/sessionPatient.js';
+import {
+  mapPatientReadToSummary,
+  mapSummaryToPatientCard,
+  mapVisitToTrajectory,
+} from '../../lib/sessionPatient.js';
 import './SessionPage.css';
 
 const SOAP_FIELD_ORDER = ['subjective', 'objective', 'assessment', 'plan'];
@@ -178,7 +183,14 @@ export default function SessionPage() {
         const visit = await fetchVisit(visitId);
         if (cancelled) return;
 
-        const summary = await fetchPatientSummary(visit.patient_id);
+        let summary;
+        try {
+          summary = await fetchPatientSummary(visit.patient_id);
+        } catch (summaryErr) {
+          console.warn('[SessionPage] summary failed, falling back to patient', summaryErr);
+          const patient = await fetchPatient(visit.patient_id);
+          summary = mapPatientReadToSummary(patient);
+        }
         if (cancelled) return;
 
         setPatient(mapSummaryToPatientCard(summary, visit));

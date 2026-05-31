@@ -132,6 +132,11 @@ export async function fetchVisit(visitId) {
   return res.json();
 }
 
+export async function fetchPatient(patientId) {
+  const res = await apiFetch(`/patients/${patientId}`);
+  return res.json();
+}
+
 export async function fetchPatientSummary(patientId) {
   const res = await apiFetch(`/patients/${patientId}/summary`);
   return res.json();

@@ -403,7 +403,10 @@ async def _run_pipeline(
     visit.soap_note = soap_note.model_dump(mode="json")
     visit.anomalies = _as_json_list(anomalies)
     visit.differentials = _as_json_list(differentials)
-    visit.drift_flag = _serialise(drift_flag)
+    serialized_drift = _serialise(drift_flag)
+    visit.drift_flag = (
+        serialized_drift if isinstance(serialized_drift, dict) else None
+    )
     visit.compliance_status = compliance_status
     visit.compliance_notes = _as_json_list(compliance_notes)
     visit.bias_flags = _as_json_list(bias_flags)

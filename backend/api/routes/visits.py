@@ -63,7 +63,7 @@ async def create_visit(
     payload: VisitCreate,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Visit:
+) -> VisitRead:
     # Validate ownership of the patient before creating the visit.
     await _load_owned_patient(payload.patient_id, user, db)
 
@@ -87,7 +87,7 @@ async def create_visit(
         visit.doctor_id,
         user.session_count_today,
     )
-    return visit
+    return VisitRead.model_validate(visit)
 
 
 # NOTE: /patient/{id} must be registered before /{visit_id} — otherwise FastAPI
@@ -99,7 +99,7 @@ async def list_patient_visits(
     db: Annotated[AsyncSession, Depends(get_db)],
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
-) -> list[Visit]:
+) -> list[VisitRead]:
     """Paginated list of visits for a patient, newest first.
 
     Returns 404 if the patient doesn't exist or isn't visible to the caller —
@@ -115,7 +115,7 @@ async def list_patient_visits(
         .offset(offset)
     )
     result = await db.scalars(stmt)
-    return list(result.all())
+    return [VisitRead.model_validate(v) for v in result.all()]
 
 
 @router.get("/{visit_id}", response_model=VisitRead)
@@ -123,5 +123,6 @@ async def get_visit(
     visit_id: UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Visit:
-    return await _load_owned_visit(visit_id, user, db)
+) -> VisitRead:
+    visit = await _load_owned_visit(visit_id, user, db)
+    return VisitRead.model_validate(visit)

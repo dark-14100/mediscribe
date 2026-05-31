@@ -7,6 +7,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import ValidationError
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,7 +46,7 @@ async def create_patient(
     payload: PatientCreate,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Patient:
+) -> PatientRead:
     patient = Patient(
         full_name=payload.full_name,
         dob=payload.dob,
@@ -58,19 +59,19 @@ async def create_patient(
     await db.commit()
     await db.refresh(patient)
     log.info("[patients] created patient_id=%s doctor_id=%s", patient.id, user.id)
-    return patient
+    return PatientRead.model_validate(patient)
 
 
 @router.get("", response_model=list[PatientRead])
 async def list_patients(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[Patient]:
+) -> list[PatientRead]:
     stmt = select(Patient).order_by(Patient.created_at.desc())
     if not _is_admin(user):
         stmt = stmt.where(Patient.doctor_id == user.id)
     result = await db.scalars(stmt)
-    return list(result.all())
+    return [PatientRead.model_validate(p) for p in result.all()]
 
 
 @router.get("/{patient_id}", response_model=PatientRead)
@@ -78,8 +79,9 @@ async def get_patient(
     patient_id: UUID,
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> Patient:
-    return await _load_owned_patient(patient_id, user, db)
+) -> PatientRead:
+    patient = await _load_owned_patient(patient_id, user, db)
+    return PatientRead.model_validate(patient)
 
 
 @router.get("/{patient_id}/summary", response_model=PatientSummary)
@@ -100,8 +102,15 @@ async def get_patient_summary(
             _is_admin(user)
             or (cached_doctor_id and str(cached_doctor_id) == str(user.id))
         ):
-            log.debug("[patients] summary cache HIT patient_id=%s", patient_id)
-            return PatientSummary.model_validate(cached)
+            try:
+                log.debug("[patients] summary cache HIT patient_id=%s", patient_id)
+                return PatientSummary.model_validate(cached)
+            except ValidationError:
+                log.warning(
+                    "[patients] invalid summary cache patient_id=%s — rebuilding",
+                    patient_id,
+                )
+                await cache.invalidate(cache_key)
         # Cached but user can't see it — fall through to authoritative DB check.
 
     patient = await _load_owned_patient(patient_id, user, db)
