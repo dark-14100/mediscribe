@@ -31,12 +31,22 @@ Rules:
 EMPTY_SOAP_FIELD: dict[str, str | list[int]] = {"text": "", "source_lines": []}
 
 
-def _format_transcript_for_prompt(transcript: list[dict]) -> str:
+def _transcript_entry_dict(entry: Any) -> dict[str, Any]:
+    """Accept dicts or Pydantic ``TranscriptLine`` models from the pipeline API."""
+    if hasattr(entry, "model_dump"):
+        return entry.model_dump()
+    if isinstance(entry, dict):
+        return entry
+    return {"line_index": "?", "speaker": "unknown", "text": str(entry)}
+
+
+def _format_transcript_for_prompt(transcript: list[Any]) -> str:
     lines: list[str] = []
     for entry in transcript:
-        line_num = entry.get("line", entry.get("line_index", "?"))
-        speaker = entry.get("speaker", "unknown")
-        text = entry.get("text", "")
+        data = _transcript_entry_dict(entry)
+        line_num = data.get("line", data.get("line_index", "?"))
+        speaker = data.get("speaker", "unknown")
+        text = data.get("text", "")
         lines.append(f"Line {line_num} [{speaker}]: {text}")
     return "\n".join(lines)
 
@@ -75,7 +85,7 @@ def _parse_llm_content(content: str) -> dict[str, Any]:
     return parsed
 
 
-async def generate_soap(transcript: list[dict]) -> dict:
+async def generate_soap(transcript: list[Any]) -> dict:
     logger.info("[SOAP_GENERATOR] Starting SOAP generation")
     try:
         user_message = _format_transcript_for_prompt(transcript)
