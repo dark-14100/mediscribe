@@ -1,28 +1,29 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { startSessionForPatient } from '../../lib/api.js';
-import { REGISTRY_PATIENTS } from '../../lib/registryPatients.js';
+import { countActiveFilters, DEFAULT_FILTERS, filterPatients } from '../../lib/filterPatients.js';
 import './PatientRegistry.css';
 
-export default function PatientRegistry({ filterSearch, onFilterSearchChange }) {
+export default function PatientRegistry({
+  patients,
+  loading = false,
+  filterSearch,
+  onFilterSearchChange,
+  onOpenAddModal,
+}) {
   const navigate = useNavigate();
   const [openingId, setOpeningId] = useState(null);
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
 
-  const filteredPatients = useMemo(() => {
-    const query = filterSearch.trim().toLowerCase();
-    if (!query) {
-      return REGISTRY_PATIENTS;
-    }
-    return REGISTRY_PATIENTS.filter(
-      (p) =>
-        p.name.toLowerCase().includes(query) ||
-        p.mrn.toLowerCase().includes(query) ||
-        p.condition.toLowerCase().includes(query),
-    );
-  }, [filterSearch]);
+  const filteredPatients = useMemo(
+    () => filterPatients(patients, filterSearch, filters),
+    [patients, filterSearch, filters],
+  );
 
+  const activeFilterCount = countActiveFilters(filters);
   const hasQuery = filterSearch.trim().length > 0;
   const isEmpty = filteredPatients.length === 0;
+  const highRisk = patients.filter((p) => p.risk === 'high').length;
 
   async function handleRowClick(patientId) {
     if (openingId) return;
@@ -32,7 +33,6 @@ export default function PatientRegistry({ filterSearch, onFilterSearchChange }) 
       navigate(`/session/${visitId}`);
     } catch (err) {
       console.error('[PatientRegistry] failed to open session:', err);
-      // Fall back to the raw id so the page still loads (mock SSE will run).
       navigate(`/session/${patientId}`);
     } finally {
       setOpeningId(null);
@@ -41,7 +41,9 @@ export default function PatientRegistry({ filterSearch, onFilterSearchChange }) 
 
   return (
     <>
-      <p className="registry-page__breadcrumb">248 PATIENTS · 14 HIGH-RISK</p>
+      <p className="registry-page__breadcrumb">
+        {patients.length} PATIENTS · {highRisk} HIGH-RISK
+      </p>
       <h1 className="registry-page__title">Patient registry</h1>
 
       <div className="registry-page__toolbar">
@@ -54,15 +56,21 @@ export default function PatientRegistry({ filterSearch, onFilterSearchChange }) 
           aria-label="Filter patients"
         />
         <button type="button" className="registry-page__filters-btn">
-          Filters · 3
+          Filters · {activeFilterCount}
         </button>
-        <button type="button" className="registry-page__add-btn">
+        <button type="button" className="registry-page__add-btn" onClick={onOpenAddModal}>
           + Add patient
         </button>
       </div>
 
       <div className="registry-table-wrap">
-        {isEmpty && hasQuery ? (
+        {loading ? (
+          <p className="registry-table__empty">Loading patients…</p>
+        ) : isEmpty && !hasQuery ? (
+          <p className="registry-table__empty">
+            No patients yet. Add one to run an end-to-end session.
+          </p>
+        ) : isEmpty && hasQuery ? (
           <p className="registry-table__empty">No patients found</p>
         ) : (
           <table className="registry-table">

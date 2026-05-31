@@ -8,3 +8,12 @@
   flex: 1;
   padding: 1.5rem 2rem 2rem;
 }
+
+.patients-page__error {
+  margin: 0 0 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
