@@ -274,7 +274,8 @@ If health check passes and login returns a token, the backend is wired correctly
 | Problem | Likely cause | Fix |
 |---|---|---|
 | `asyncpg` SSL error on Supabase | Missing `+asyncpg` in URL | Make sure URL starts `postgresql+asyncpg://` |
-| `InvalidSQLStatementNameError` / prepared statement does not exist | PgBouncer (Supabase pooler) + asyncpg cache | Use port **6543** pooler URL; deploy latest backend (`statement_cache_size=0` in `db/session.py`) |
+| `InvalidSQLStatementNameError` / prepared statement does not exist | PgBouncer (Supabase pooler) + asyncpg cache | Use port **6543** pooler URL; deploy latest backend (`NullPool` + `statement_cache_size=0` in `db/session.py`) |
+| Intermittent 500 on `GET /analytics/load` or `/visits/{id}` | Same PgBouncer issue under load | Redeploy backend; avoid trailing-slash URLs like `/patients/` |
 | Redis `SSL: CERTIFICATE_VERIFY_FAILED` | Missing query param | Append `?ssl_cert_reqs=none` to `REDIS_URL` |
 | `relation "users" does not exist` | Migrations haven't run | Run `alembic upgrade head` |
 | `extension "vector" does not exist` | pgvector not enabled | Enable in Supabase Dashboard → Extensions |

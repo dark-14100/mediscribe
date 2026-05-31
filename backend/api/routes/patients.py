@@ -62,6 +62,15 @@ async def create_patient(
     return PatientRead.model_validate(patient)
 
 
+@router.get("/", response_model=list[PatientRead], include_in_schema=False)
+async def list_patients_trailing_slash(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> list[PatientRead]:
+    """Some clients request ``/patients/``; avoid matching ``/{patient_id}`` with an empty id."""
+    return await list_patients(user, db)
+
+
 @router.get("", response_model=list[PatientRead])
 async def list_patients(
     user: Annotated[User, Depends(get_current_user)],

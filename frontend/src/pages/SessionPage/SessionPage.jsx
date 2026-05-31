@@ -246,10 +246,12 @@ export default function SessionPage() {
 
   useEffect(() => {
     if (!useRealApi) return;
-    apiFetch('/analytics/load')
+    apiFetch('/analytics/load', {}, { retries: 2 })
       .then((r) => r.json())
       .then(setCognitiveLoad)
-      .catch(() => {}); // non-fatal
+      .catch((err) => {
+        console.warn('[SessionPage] cognitive load unavailable:', err);
+      });
   }, [useRealApi]);
 
   // Surface drift via console for now — the visual element lives in the

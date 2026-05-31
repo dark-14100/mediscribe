@@ -31,8 +31,17 @@ export async function readApiError(response) {
   return response.statusText || 'Request failed';
 }
 
-export async function apiFetch(path, options = {}) {
-  const url = `${BASE_URL}${path}`;
+function normalizeApiPath(path) {
+  if (!path.startsWith('/')) return `/${path}`;
+  // Avoid /patients/ etc. — trailing slashes can hit the wrong FastAPI route.
+  if (path.length > 1 && path.endsWith('/')) {
+    return path.replace(/\/+$/, '');
+  }
+  return path;
+}
+
+export async function apiFetch(path, options = {}, { retries = 0 } = {}) {
+  const url = `${BASE_URL}${normalizeApiPath(path)}`;
   const headers = { ...options.headers };
 
   const token = getToken();
@@ -40,7 +49,17 @@ export async function apiFetch(path, options = {}) {
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(url, { ...options, headers });
+  const method = (options.method || 'GET').toUpperCase();
+  const canRetry = method === 'GET' && retries > 0;
+
+  let response;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    response = await fetch(url, { ...options, headers });
+    if (!canRetry || response.status !== 500 || attempt >= retries) {
+      break;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+  }
 
   if (response.status === 401) {
     // Token is missing, expired, or invalid — drop it so the next
@@ -123,25 +142,13 @@ export async function fetchCurrentUser() {
 
 /** List patients for the logged-in doctor (empty array if none). */
 export async function fetchPatients() {
-  const res = await apiFetch('/patients');
+  const res = await apiFetch('/patients', {}, { retries: 2 });
   return res.json();
 }
 
-export async function fetchVisit(visitId, { retries = 2 } = {}) {
-  let lastError;
-  for (let attempt = 0; attempt <= retries; attempt += 1) {
-    try {
-      const res = await apiFetch(`/visits/${visitId}`);
-      return res.json();
-    } catch (err) {
-      lastError = err;
-      if (attempt >= retries || err.status !== 500) {
-        throw err;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
-    }
-  }
-  throw lastError;
+export async function fetchVisit(visitId) {
+  const res = await apiFetch(`/visits/${visitId}`, {}, { retries: 2 });
+  return res.json();
 }
 
 export async function fetchPatient(patientId) {
@@ -150,13 +157,13 @@ export async function fetchPatient(patientId) {
 }
 
 export async function fetchPatientSummary(patientId) {
-  const res = await apiFetch(`/patients/${patientId}/summary`);
+  const res = await apiFetch(`/patients/${patientId}/summary`, {}, { retries: 2 });
   return res.json();
 }
 
 export async function fetchPatientVisits(patientId) {
   try {
-    const res = await apiFetch(`/visits/patient/${patientId}`);
+    const res = await apiFetch(`/visits/patient/${patientId}`, {}, { retries: 2 });
     return res.json();
   } catch (err) {
     if (err.status === 500) {

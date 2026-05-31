@@ -43,17 +43,30 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
-def _pg_connect_args() -> dict[str, int]:
+def _migration_engine_url() -> str:
+    url = settings.DATABASE_URL
+    if "prepared_statement_cache_size" in url or url.startswith("sqlite"):
+        return url
+    if "pooler" in url.lower() or ":6543" in url:
+        sep = "&" if "?" in url else "?"
+        return f"{url}{sep}prepared_statement_cache_size=0"
+    return url
+
+
+def _pg_connect_args() -> dict:
     if settings.DATABASE_URL.startswith("sqlite"):
         return {}
-    return {"statement_cache_size": 0}
+    return {
+        "statement_cache_size": 0,
+        "prepared_statement_cache_size": 0,
+    }
 
 
 async def run_migrations_online() -> None:
     from sqlalchemy.ext.asyncio import create_async_engine
 
     connectable = create_async_engine(
-        settings.DATABASE_URL,
+        _migration_engine_url(),
         poolclass=pool.NullPool,
         connect_args=_pg_connect_args(),
     )

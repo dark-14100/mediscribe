@@ -69,7 +69,14 @@ async def get_cognitive_load(
         count = 0
         user.session_count_today = 0
         user.last_session_date = today
-        await db.commit()
+        try:
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            log.exception(
+                "[analytics] failed to reset session count user_id=%s", user.id
+            )
+            raise
         log.info(
             "[analytics] reset session count for user_id=%s on %s", user.id, today
         )
