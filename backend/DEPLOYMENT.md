@@ -20,7 +20,8 @@ to deploy the backend (Railway or Render) and the frontend (Vercel).
    postgresql://postgres.xxxx:PASSWORD@aws-0-ap-south-1.pooler.supabase.com:6543/postgres
    ```
 6. For asyncpg, change `postgresql://` to `postgresql+asyncpg://`. That's your `DATABASE_URL`.
-7. Enable the **pgvector** extension:
+7. Use the **Transaction pooler** URI (port **6543**), not the direct session connection on 5432, for Railway/serverless backends. The app disables asyncpg prepared statements for PgBouncer compatibility (see `db/session.py`).
+8. Enable the **pgvector** extension:
    - Sidebar → **Database → Extensions**.
    - Search for `vector` → toggle it **ON**.
    - ⚠️ The app migration (`001_initial_schema.py`) also runs `CREATE EXTENSION IF NOT EXISTS vector`, so this is belt-and-suspenders.
@@ -273,6 +274,7 @@ If health check passes and login returns a token, the backend is wired correctly
 | Problem | Likely cause | Fix |
 |---|---|---|
 | `asyncpg` SSL error on Supabase | Missing `+asyncpg` in URL | Make sure URL starts `postgresql+asyncpg://` |
+| `InvalidSQLStatementNameError` / prepared statement does not exist | PgBouncer (Supabase pooler) + asyncpg cache | Use port **6543** pooler URL; deploy latest backend (`statement_cache_size=0` in `db/session.py`) |
 | Redis `SSL: CERTIFICATE_VERIFY_FAILED` | Missing query param | Append `?ssl_cert_reqs=none` to `REDIS_URL` |
 | `relation "users" does not exist` | Migrations haven't run | Run `alembic upgrade head` |
 | `extension "vector" does not exist` | pgvector not enabled | Enable in Supabase Dashboard → Extensions |

@@ -10,8 +10,6 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import pool
 from sqlalchemy.engine import Connection
-from sqlalchemy.ext.asyncio import async_engine_from_config
-
 import models  # noqa: F401 — registers every ORM model with Base.metadata
 from core.config import settings
 from db.base import Base
@@ -45,11 +43,19 @@ def do_run_migrations(connection: Connection) -> None:
         context.run_migrations()
 
 
+def _pg_connect_args() -> dict[str, int]:
+    if settings.DATABASE_URL.startswith("sqlite"):
+        return {}
+    return {"statement_cache_size": 0}
+
+
 async def run_migrations_online() -> None:
-    connectable = async_engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    from sqlalchemy.ext.asyncio import create_async_engine
+
+    connectable = create_async_engine(
+        settings.DATABASE_URL,
         poolclass=pool.NullPool,
+        connect_args=_pg_connect_args(),
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

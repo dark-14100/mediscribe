@@ -14,7 +14,15 @@ from core.config import settings
 # so only pass connection-pool args on real database backends.
 _engine_kwargs: dict[str, Any] = {"echo": False}
 if not settings.DATABASE_URL.startswith("sqlite"):
-    _engine_kwargs.update(pool_pre_ping=True, pool_size=5, max_overflow=10)
+    # Supabase (and other PgBouncer transaction poolers) do not support asyncpg's
+    # default prepared-statement cache — without this, requests 500 with
+    # InvalidSQLStatementNameError after connections are recycled.
+    _engine_kwargs.update(
+        pool_pre_ping=True,
+        pool_size=5,
+        max_overflow=10,
+        connect_args={"statement_cache_size": 0},
+    )
 
 engine = create_async_engine(settings.DATABASE_URL, **_engine_kwargs)
 
