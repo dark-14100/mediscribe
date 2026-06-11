@@ -36,7 +36,7 @@ function AutoGrowTextarea({ value, onChange, disabled, placeholder }) {
   );
 }
 
-export default function SOAPNote({ soap, visibleFields, modifiedFields, onChange }) {
+export default function SOAPNote({ soap, visibleFields, modifiedFields, onChange, errored = false }) {
   return (
     <section className="soap-note">
       <h2 className="soap-note__title">SOAP Note</h2>
@@ -45,10 +45,20 @@ export default function SOAPNote({ soap, visibleFields, modifiedFields, onChange
           const visible = visibleFields?.has(key) ?? false;
           const edited = modifiedFields?.has(key) ?? false;
           const count = wordCount(soap[key]);
+          // On pipeline error, let the doctor type the section manually
+          // instead of leaving a permanent "streaming" placeholder.
+          const editable = (visible || errored) && Boolean(onChange);
+          const placeholder = visible
+            ? ''
+            : errored
+            ? 'Couldn’t generate — type manually'
+            : 'Streaming from pipeline…';
           return (
             <label
               key={key}
-              className={`soap-note__field ${visible ? 'soap-note__field--visible' : ''}`}
+              className={`soap-note__field ${
+                visible || errored ? 'soap-note__field--visible' : ''
+              }`}
             >
               <span className="soap-note__field-head">
                 <span className="soap-note__label">{label}</span>
@@ -64,8 +74,8 @@ export default function SOAPNote({ soap, visibleFields, modifiedFields, onChange
               <AutoGrowTextarea
                 value={soap[key]}
                 onChange={onChange ? (val) => onChange(key, val) : undefined}
-                placeholder={visible ? '' : 'Streaming from pipeline…'}
-                disabled={!visible || !onChange}
+                placeholder={placeholder}
+                disabled={!editable}
               />
             </label>
           );

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import AppNav from '../../components/AppNav/AppNav';
 import AnomalyFlag from '../../components/AnomalyFlag/AnomalyFlag';
 import AudioRecorder from '../../components/AudioRecorder/AudioRecorder';
@@ -99,6 +99,7 @@ function staggerSoapFields(setVisibleFields, setSoap, soapData) {
 
 export default function SessionPage() {
   const { visitId } = useParams();
+  const navigate = useNavigate();
   const toast = useToast();
   const apiBase = import.meta.env.VITE_API_URL;
   const useRealApi = Boolean(apiBase) && Boolean(visitId) && !isDemoVisitId(visitId);
@@ -568,16 +569,47 @@ export default function SessionPage() {
             visibleFields={visibleFields}
             modifiedFields={doctorModifiedFields}
             onChange={isSigned ? undefined : handleSoapChange}
+            errored={pipelineStatus === 'error'}
           />
 
           <ComplianceBadge compliance={compliance} />
 
           {saveError && <p className="session-page__error">{saveError}</p>}
 
+          {isSigned ? (
+            <div className="session-page__signed-card" role="status">
+              <div className="session-page__signed-head">
+                <span className="session-page__signed-check" aria-hidden="true">
+                  ✓
+                </span>
+                <div>
+                  <p className="session-page__signed-title">Note signed and locked</p>
+                  <p className="session-page__signed-sub">
+                    This visit is finalized and can no longer be edited.
+                  </p>
+                </div>
+              </div>
+              <div className="session-page__signed-actions">
+                <button
+                  type="button"
+                  className="session-page__signed-primary"
+                  onClick={() => navigate('/patients')}
+                >
+                  Back to patients
+                </button>
+                <button
+                  type="button"
+                  className="session-page__signed-secondary"
+                  onClick={() => navigate('/sessions')}
+                >
+                  View all sessions
+                </button>
+              </div>
+            </div>
+          ) : null}
+
           <div className="session-page__actions">
-            {isSigned ? (
-              <span className="session-page__signed-badge">✓ Note signed</span>
-            ) : !useRealApi ? (
+            {isSigned ? null : !useRealApi ? (
               <p className="session-page__demo-hint">
                 Demo session: connect the API and open a real visit to save or sign notes.
               </p>
