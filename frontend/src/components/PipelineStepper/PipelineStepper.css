@@ -1,0 +1,110 @@
+.pipeline-stepper {
+  list-style: none;
+  margin: 0;
+  padding: 0.875rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+}
+
+.pipeline-stepper__step {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.pipeline-stepper__marker {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  flex-shrink: 0;
+  border-radius: var(--radius-full);
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: var(--color-bg);
+  color: var(--color-text-muted);
+  border: 1px solid var(--color-border);
+}
+
+.pipeline-stepper__label {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.pipeline-stepper__bar {
+  flex: 1;
+  height: 2px;
+  margin: 0 0.625rem;
+  background: var(--color-border);
+  border-radius: 1px;
+}
+
+/* done */
+.pipeline-stepper__step--done .pipeline-stepper__marker {
+  background: #1a8a7a;
+  border-color: #1a8a7a;
+  color: #fff;
+}
+
+.pipeline-stepper__step--done .pipeline-stepper__label {
+  color: var(--color-text);
+}
+
+.pipeline-stepper__step--done .pipeline-stepper__bar {
+  background: #1a8a7a;
+}
+
+/* active */
+.pipeline-stepper__step--active .pipeline-stepper__marker {
+  background: #fff;
+  border-color: #1a8a7a;
+  color: #1a8a7a;
+  box-shadow: 0 0 0 3px rgba(26, 138, 122, 0.15);
+  animation: stepper-pulse 1.4s ease-in-out infinite;
+}
+
+.pipeline-stepper__step--active .pipeline-stepper__label {
+  color: #1a8a7a;
+}
+
+@keyframes stepper-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 3px rgba(26, 138, 122, 0.15);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(26, 138, 122, 0.05);
+  }
+}
+
+/* error */
+.pipeline-stepper__step--error .pipeline-stepper__marker {
+  background: var(--color-danger);
+  border-color: var(--color-danger);
+  color: #fff;
+}
+
+.pipeline-stepper__step--error .pipeline-stepper__label {
+  color: var(--color-danger);
+}
+
+@media (max-width: 640px) {
+  .pipeline-stepper__label {
+    display: none;
+  }
+  .pipeline-stepper__bar {
+    margin: 0 0.375rem;
+  }
+}

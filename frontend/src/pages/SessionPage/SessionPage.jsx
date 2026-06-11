@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import AppNav from '../../components/AppNav/AppNav';
 import AnomalyFlag from '../../components/AnomalyFlag/AnomalyFlag';
@@ -6,10 +6,14 @@ import AudioRecorder from '../../components/AudioRecorder/AudioRecorder';
 import BiasReviewPanel from '../../components/BiasReviewPanel/BiasReviewPanel';
 import CognitiveLoadNudge from '../../components/CognitiveLoadNudge/CognitiveLoadNudge';
 import ComplianceBadge from '../../components/ComplianceBadge/ComplianceBadge';
+import ConfirmDialog from '../../components/ConfirmDialog/ConfirmDialog';
 import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPanel';
 import PatientCard from '../../components/PatientCard/PatientCard';
+import PipelineStepper from '../../components/PipelineStepper/PipelineStepper';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
+import TranscriptPanel from '../../components/TranscriptPanel/TranscriptPanel';
+import { useToast } from '../../components/Toast/toastContext.js';
 import {
   apiFetch,
   fetchPatient,
@@ -54,6 +58,20 @@ function normalizeSoap(payload) {
   };
 }
 
+// Parse a stored `raw_transcript` string (`[doctor] hello\n[patient] hi`) back
+// into structured lines for the transcript panel.
+function parseRawTranscript(raw) {
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split('\n')
+    .map((line, i) => {
+      const match = line.match(/^\[(doctor|patient)\]\s?(.*)$/i);
+      if (!match) return null;
+      return { speaker: match[1].toLowerCase(), text: match[2], line_index: i };
+    })
+    .filter(Boolean);
+}
+
 function soapToRequest(soap, doctorModifiedFields) {
   const toField = (text) => ({ text: text ?? '', source_lines: [] });
   return {
@@ -80,6 +98,7 @@ function staggerSoapFields(setVisibleFields, setSoap, soapData) {
 
 export default function SessionPage() {
   const { visitId } = useParams();
+  const toast = useToast();
   const apiBase = import.meta.env.VITE_API_URL;
   const useRealApi = Boolean(apiBase) && Boolean(visitId) && !isDemoVisitId(visitId);
 
@@ -95,6 +114,7 @@ export default function SessionPage() {
   const [sessionLoadError, setSessionLoadError] = useState(null);
   const [transcriptError, setTranscriptError] = useState(null);
 
+  const [transcript, setTranscript] = useState([]);
   const [soap, setSoap] = useState(EMPTY_SOAP);
   const [visibleFields, setVisibleFields] = useState(() => new Set());
   const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
@@ -111,6 +131,8 @@ export default function SessionPage() {
   // 'idle' | 'running' | 'done' | 'saving' | 'signing' | 'signed' | 'error'
 
   const [saveError, setSaveError] = useState(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [confirmSignOpen, setConfirmSignOpen] = useState(false);
   const sseRef = useRef(null);
 
   // ── SSE event handlers ───────────────────────────────────────────────────
@@ -202,6 +224,9 @@ export default function SessionPage() {
           setSoap(existingSoap);
           setVisibleFields(new Set(SOAP_FIELD_ORDER));
         }
+
+        const existingTranscript = parseRawTranscript(visit.raw_transcript);
+        if (existingTranscript.length) setTranscript(existingTranscript);
 
         if (visit.anomalies?.length) setAnomalies(visit.anomalies);
         if (visit.differentials?.length) setDifferentials(visit.differentials);
@@ -304,6 +329,7 @@ export default function SessionPage() {
         return;
       }
 
+      setTranscript(transcript);
       setPipelineStatus('running');
       try {
         await apiFetch('/pipeline/run', {
@@ -325,7 +351,19 @@ export default function SessionPage() {
   const handleSoapChange = useCallback((key, value) => {
     setSoap((prev) => ({ ...prev, [key]: value }));
     setDoctorModifiedFields((prev) => new Set([...prev, key]));
+    setHasUnsavedChanges(true);
   }, []);
+
+  // Warn before leaving with unsaved edits (covers refresh / tab close).
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+    function onBeforeUnload(e) {
+      e.preventDefault();
+      e.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [hasUnsavedChanges]);
 
   // ── bias accept / dismiss ────────────────────────────────────────────────
 
@@ -340,6 +378,7 @@ export default function SessionPage() {
             if (updated[field].includes(flag.phrase)) {
               updated[field] = updated[field].replace(flag.phrase, flag.suggested_rewrite);
               setDoctorModifiedFields((m) => new Set([...m, field]));
+              setHasUnsavedChanges(true);
               break;
             }
           }
@@ -377,17 +416,20 @@ export default function SessionPage() {
       });
       const saved = await res.json();
       applyComplianceFromVisit(saved);
+      setHasUnsavedChanges(false);
       setPipelineStatus('done');
+      toast.success('Draft saved');
     } catch (err) {
       console.error('[SessionPage] save failed:', err);
       setSaveError('Failed to save — please try again.');
       setPipelineStatus('done');
+      toast.error('Could not save the note. Please try again.');
     }
   }
 
   // ── sign off ─────────────────────────────────────────────────────────────
 
-  async function handleSignOff() {
+  async function handleConfirmSignOff() {
     if (!useRealApi) return;
     if (pipelineStatus === 'signed') return;
     setSaveError(null);
@@ -403,15 +445,23 @@ export default function SessionPage() {
       const saved = await saveRes.json();
       applyComplianceFromVisit(saved);
       await apiFetch(`/notes/sign/${visitId}`, { method: 'POST' });
+      setHasUnsavedChanges(false);
       setPipelineStatus('signed');
+      setConfirmSignOpen(false);
+      toast.success('Note signed and locked');
     } catch (err) {
       const already = err?.status === 409;
       if (already) {
+        setHasUnsavedChanges(false);
         setPipelineStatus('signed');
+        setConfirmSignOpen(false);
+        toast.info('This note was already signed.');
       } else {
         console.error('[SessionPage] sign failed:', err);
         setSaveError('Failed to sign — please try again.');
         setPipelineStatus('done');
+        setConfirmSignOpen(false);
+        toast.error('Could not sign the note. Please try again.');
       }
     }
   }
@@ -421,6 +471,34 @@ export default function SessionPage() {
   const isSigned = pipelineStatus === 'signed';
   const isSaving = pipelineStatus === 'saving' || pipelineStatus === 'signing';
   const recorderDisabled = pipelineStatus === 'running' || isSaving || isSigned;
+
+  const pipelineSteps = useMemo(() => {
+    const soapHasContent = SOAP_FIELD_ORDER.some((f) => (soap[f] || '').trim().length > 0);
+    const done = [
+      transcript.length > 0,
+      anomalies.length > 0 || differentials.length > 0,
+      visibleFields.size >= SOAP_FIELD_ORDER.length || soapHasContent,
+      Boolean(compliance),
+    ];
+    const labels = ['Transcribe', 'Analyze', 'SOAP note', 'Compliance'];
+    const running = pipelineStatus === 'running';
+    const errored = pipelineStatus === 'error';
+    const firstPending = done.findIndex((d) => !d);
+
+    return labels.map((label, i) => {
+      let status = done[i] ? 'done' : 'pending';
+      if (!done[i] && i === firstPending) {
+        if (errored) status = 'error';
+        else if (running) status = 'active';
+      }
+      return { label, status };
+    });
+  }, [transcript, anomalies, differentials, visibleFields, soap, compliance, pipelineStatus]);
+
+  const showStepper =
+    pipelineStatus === 'running' ||
+    pipelineStatus === 'error' ||
+    pipelineSteps.some((s) => s.status === 'done');
 
   const showNudge =
     !nudgeDismissed &&
@@ -474,15 +552,20 @@ export default function SessionPage() {
             </p>
           ) : null}
 
+          {showStepper ? <PipelineStepper steps={pipelineSteps} /> : null}
+
           {pipelineStatus === 'running' && (
             <p className="session-page__pipeline-status">
               Analysing session — results streaming in…
             </p>
           )}
 
+          <TranscriptPanel lines={transcript} />
+
           <SOAPNote
             soap={soap}
             visibleFields={visibleFields}
+            modifiedFields={doctorModifiedFields}
             onChange={isSigned ? undefined : handleSoapChange}
           />
 
@@ -510,7 +593,7 @@ export default function SessionPage() {
                 <button
                   type="button"
                   className="session-page__sign"
-                  onClick={handleSignOff}
+                  onClick={() => setConfirmSignOpen(true)}
                   disabled={isSaving}
                 >
                   {pipelineStatus === 'signing' ? 'Signing…' : 'Sign Off'}
@@ -542,6 +625,17 @@ export default function SessionPage() {
           />
         </aside>
       </div>
+
+      <ConfirmDialog
+        open={confirmSignOpen}
+        title="Sign off this note?"
+        message="Signing locks the note permanently — it can no longer be edited. Any unsaved changes will be saved first."
+        confirmLabel="Sign & lock"
+        cancelLabel="Keep editing"
+        busy={pipelineStatus === 'signing'}
+        onConfirm={handleConfirmSignOff}
+        onCancel={() => setConfirmSignOpen(false)}
+      />
     </div>
   );
 }

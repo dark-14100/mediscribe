@@ -30,11 +30,40 @@
   opacity: 1;
 }
 
+.soap-note__field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
 .soap-note__label {
   font-size: 0.75rem;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.soap-note__meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.soap-note__edited {
+  font-size: 0.625rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #1a8a7a;
+  background: rgba(26, 138, 122, 0.12);
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--radius-full);
+}
+
+.soap-note__words {
+  font-size: 0.6875rem;
   color: var(--color-text-muted);
 }
 
@@ -47,8 +76,9 @@
   font-size: 0.875rem;
   line-height: 1.5;
   color: var(--color-text);
-  resize: vertical;
-  min-height: 5rem;
+  resize: none;
+  overflow: hidden;
+  min-height: 4.5rem;
 }
 
 .soap-note__field--visible textarea {

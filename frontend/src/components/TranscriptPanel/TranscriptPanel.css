@@ -1,0 +1,95 @@
+.transcript-panel {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.transcript-panel__header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.875rem 1.25rem;
+  background: var(--color-surface);
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.transcript-panel__header:hover {
+  background: rgba(26, 138, 122, 0.04);
+}
+
+.transcript-panel__title {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+}
+
+.transcript-panel__count {
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  background: var(--color-bg);
+  padding: 0.125rem 0.5rem;
+  border-radius: var(--radius-full);
+}
+
+.transcript-panel__chevron {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+}
+
+.transcript-panel__lines {
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 1.25rem 1rem;
+  max-height: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.transcript-panel__line {
+  display: flex;
+  flex-direction: column;
+  gap: 0.125rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: var(--radius-md);
+  background: var(--color-bg);
+}
+
+.transcript-panel__line--doctor {
+  background: rgba(26, 138, 122, 0.06);
+}
+
+.transcript-panel__speaker {
+  font-size: 0.6875rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.transcript-panel__line--doctor .transcript-panel__speaker {
+  color: #1a8a7a;
+}
+
+.transcript-panel__line--patient .transcript-panel__speaker {
+  color: var(--color-info);
+}
+
+.transcript-panel__text {
+  font-size: 0.875rem;
+  line-height: 1.5;
+  color: var(--color-text);
+}
