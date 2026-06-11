@@ -64,6 +64,29 @@
   color: var(--color-danger);
 }
 
+.audio-recorder__live {
+  display: flex;
+  align-items: center;
+  gap: 0.875rem;
+}
+
+.audio-recorder__meter {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 1.75rem;
+}
+
+.audio-recorder__bar {
+  width: 4px;
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--color-danger);
+  transform-origin: center;
+  transform: scaleY(0.12);
+  transition: transform 0.08s linear;
+}
+
 .audio-recorder__pulse {
   position: absolute;
   left: 1.75rem;

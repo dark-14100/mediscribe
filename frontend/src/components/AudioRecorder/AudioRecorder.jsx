@@ -23,15 +23,22 @@ const STATUS_LABEL = {
  *   onTranscriptReady  – called with the transcript array once transcription succeeds
  *   disabled           – blocks starting a new recording (e.g. while pipeline runs)
  */
+const METER_BARS = 7;
+const ZERO_LEVELS = Array(METER_BARS).fill(0);
+
 export default function AudioRecorder({ visitId, onTranscriptReady, disabled = false }) {
   const [status, setStatus] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
+  const [levels, setLevels] = useState(ZERO_LEVELS);
 
   const mediaRecorderRef = useRef(null);
   const chunksRef = useRef([]);
   const intervalRef = useRef(null);
   const streamRef = useRef(null);
+  const audioCtxRef = useRef(null);
+  const analyserRef = useRef(null);
+  const rafRef = useRef(null);
 
   const isRecording = status === 'recording';
   const isBusy = status === 'transcribing';
@@ -46,12 +53,59 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
     return () => clearInterval(intervalRef.current);
   }, [isRecording]);
 
-  // Cleanup mic stream on unmount
+  // Cleanup mic stream + audio analyser on unmount
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
+      stopMeter();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function startMeter(stream) {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    try {
+      const audioCtx = new AudioCtx();
+      const source = audioCtx.createMediaStreamSource(stream);
+      const analyser = audioCtx.createAnalyser();
+      analyser.fftSize = 64;
+      source.connect(analyser);
+      audioCtxRef.current = audioCtx;
+      analyserRef.current = analyser;
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const step = Math.max(1, Math.floor(data.length / METER_BARS));
+      const tick = () => {
+        analyser.getByteFrequencyData(data);
+        const next = [];
+        for (let i = 0; i < METER_BARS; i += 1) {
+          let sum = 0;
+          for (let j = 0; j < step; j += 1) sum += data[i * step + j] ?? 0;
+          // Normalise to 0..1 with a floor so quiet speech still shows movement.
+          next.push(Math.min(1, sum / step / 170));
+        }
+        setLevels(next);
+        rafRef.current = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch (err) {
+      console.warn('[AudioRecorder] level meter unavailable:', err);
+    }
+  }
+
+  function stopMeter() {
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
+    }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+    }
+    analyserRef.current = null;
+    setLevels(ZERO_LEVELS);
+  }
 
   async function startRecording() {
     if (disabled || isBusy) return;
@@ -73,10 +127,12 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
 
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
+        stopMeter();
         handleTranscribe(chunksRef.current, mimeType);
       };
 
       recorder.start(250); // collect chunks every 250 ms
+      startMeter(stream);
       setElapsed(0);
       setStatus('recording');
     } catch (err) {
@@ -183,7 +239,20 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
           <span className="audio-recorder__label">
             {errorMessage || STATUS_LABEL[status]}
           </span>
-          <span className="audio-recorder__timer">{isRecording ? formatTime(elapsed) : ''}</span>
+          {isRecording ? (
+            <div className="audio-recorder__live">
+              <span className="audio-recorder__timer">{formatTime(elapsed)}</span>
+              <div className="audio-recorder__meter" aria-hidden="true">
+                {levels.map((lvl, i) => (
+                  <span
+                    key={i}
+                    className="audio-recorder__bar"
+                    style={{ transform: `scaleY(${0.12 + lvl * 0.88})` }}
+                  />
+                ))}
+              </div>
+            </div>
+          ) : null}
         </div>
 
         {isRecording ? <span className="audio-recorder__pulse" aria-hidden="true" /> : null}
