@@ -2,6 +2,8 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { openLatestVisitOrStart, startSessionForPatient } from '../../lib/api.js';
 import { countActiveFilters, DEFAULT_FILTERS, filterPatients } from '../../lib/filterPatients.js';
+import EmptyState from '../EmptyState/EmptyState';
+import { SkeletonRow } from '../Skeleton/Skeleton';
 import './PatientRegistry.css';
 
 export default function PatientRegistry({
@@ -117,13 +119,21 @@ export default function PatientRegistry({
 
       <div className="registry-table-wrap">
         {loading ? (
-          <p className="registry-table__empty">Loading patients…</p>
+          <div className="registry-table__skeleton">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <SkeletonRow key={i} />
+            ))}
+          </div>
         ) : isEmpty && !hasQuery ? (
-          <p className="registry-table__empty">
-            No patients yet. Add one to run an end-to-end session.
-          </p>
+          <EmptyState
+            icon="🧑‍⚕️"
+            title="No patients yet"
+            message="Add your first patient to start an end-to-end documentation session."
+            actionLabel="+ Add patient"
+            onAction={onOpenAddModal}
+          />
         ) : isEmpty && hasQuery ? (
-          <p className="registry-table__empty">No patients found</p>
+          <EmptyState icon="🔍" title="No patients found" message="Try a different search or clear your filters." />
         ) : (
           <table className="registry-table">
             <thead>

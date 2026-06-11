@@ -1,19 +1,3 @@
-.bias-review-panel {
-  background: var(--color-surface);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-lg);
-  padding: 1rem;
-}
-
-.bias-review-panel__title {
-  font-size: 0.8125rem;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  color: var(--color-text-muted);
-  margin-bottom: 0.75rem;
-}
-
 .bias-review-panel__empty {
   font-size: 0.8125rem;
   color: var(--color-text-muted);
@@ -21,6 +5,8 @@
 
 .bias-review-panel__list {
   list-style: none;
+  margin: 0;
+  padding: 0;
   display: flex;
   flex-direction: column;
   gap: 0.75rem;

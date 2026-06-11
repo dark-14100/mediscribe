@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import AppNav from '../AppNav/AppNav';
+import EmptyState from '../EmptyState/EmptyState';
+import { SkeletonCard, SkeletonRow } from '../Skeleton/Skeleton';
 import { useAuth } from '../../lib/authContext.js';
 import {
   fetchPatients,
@@ -177,9 +179,19 @@ export default function DashboardPage() {
         <section className="dashboard-page__section">
           <h2 className="dashboard-page__section-title">Active patients</h2>
           {loading ? (
-            <p className="dashboard-page__empty">Loading patients…</p>
+            <div className="dashboard-page__active-row">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
           ) : activePatients.length === 0 && !loadError ? (
-            <p className="dashboard-page__empty">No patients yet. Add one from the registry.</p>
+            <EmptyState
+              icon="🧑‍⚕️"
+              title="No patients yet"
+              message="Add a patient from the registry to begin documenting visits."
+              actionLabel="Go to patients"
+              onAction={() => navigate('/patients')}
+            />
           ) : activePatients.length === 0 ? null : (
             <div className="dashboard-page__active-row">
               {activePatients.map((patient) => (
@@ -231,7 +243,15 @@ export default function DashboardPage() {
 
         <section className="dashboard-page__section">
           <h2 className="dashboard-page__section-title">Recent sessions</h2>
-          {USE_API && recentVisits.length === 0 ? (
+          {USE_API && loading ? (
+            <ul className="dashboard-page__sessions-list">
+              {Array.from({ length: 3 }).map((_, i) => (
+                <li key={i}>
+                  <SkeletonRow />
+                </li>
+              ))}
+            </ul>
+          ) : USE_API && recentVisits.length === 0 ? (
             <p className="dashboard-page__empty">No sessions yet.</p>
           ) : (
             <ul className="dashboard-page__sessions-list">

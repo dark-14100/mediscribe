@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppNav from '../../components/AppNav/AppNav';
+import EmptyState from '../../components/EmptyState/EmptyState';
+import { SkeletonRow } from '../../components/Skeleton/Skeleton';
 import { fetchRecentVisits } from '../../lib/api.js';
 import { getInitials } from '../../lib/buildPatient.js';
 import './SessionsPage.css';
@@ -175,11 +177,21 @@ export default function SessionsPage() {
         ) : null}
 
         {loading ? (
-          <p className="sessions-page__empty">Loading sessions…</p>
+          <ul className="sessions-page__list">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <li key={i}>
+                <SkeletonRow />
+              </li>
+            ))}
+          </ul>
         ) : sessions.length === 0 ? (
-          <p className="sessions-page__empty">
-            No sessions yet. Start one from a patient in the registry.
-          </p>
+          <EmptyState
+            icon="🩺"
+            title="No sessions yet"
+            message="Open a patient from the registry to start your first documentation session."
+            actionLabel="Go to patients"
+            onAction={() => navigate('/patients')}
+          />
         ) : isEmpty ? (
           <p className="sessions-page__empty">No {filter} sessions.</p>
         ) : (

@@ -10,6 +10,7 @@ import ConfirmDialog from '../../components/ConfirmDialog/ConfirmDialog';
 import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPanel';
 import PatientCard from '../../components/PatientCard/PatientCard';
 import PipelineStepper from '../../components/PipelineStepper/PipelineStepper';
+import SidePanel from '../../components/SidePanel/SidePanel';
 import SOAPNote from '../../components/SOAPNote/SOAPNote';
 import TrajectoryCard from '../../components/TrajectoryCard/TrajectoryCard';
 import TranscriptPanel from '../../components/TranscriptPanel/TranscriptPanel';
@@ -604,16 +605,20 @@ export default function SessionPage() {
         </div>
 
         <aside className="session-page__sidebar">
-          <section className="session-page__panel-section">
-            <h3 className="session-page__panel-title">Anomalies</h3>
+          <SidePanel
+            title="Anomalies"
+            count={anomalies.length}
+            tone={anomalies.some((a) => a.severity === 'high') ? 'danger' : 'alert'}
+            emptyLabel={
+              pipelineStatus === 'running' ? 'Analysing…' : 'No anomalies detected.'
+            }
+          >
             <div className="session-page__anomalies">
-              {anomalies.length > 0 ? (
-                anomalies.map((a) => <AnomalyFlag key={a.id} anomaly={a} />)
-              ) : (
-                <p className="session-page__panel-empty">Waiting for pipeline…</p>
-              )}
+              {anomalies.map((a) => (
+                <AnomalyFlag key={a.id} anomaly={a} />
+              ))}
             </div>
-          </section>
+          </SidePanel>
 
           <DifferentialPanel differentials={differentials} />
 

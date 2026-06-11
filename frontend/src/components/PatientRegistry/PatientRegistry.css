@@ -211,6 +211,14 @@
   vertical-align: middle;
 }
 
+.registry-table__skeleton {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
 .registry-table__actions {
   text-align: right;
   white-space: nowrap;
