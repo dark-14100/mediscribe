@@ -8,6 +8,7 @@ import {
   fetchPatients,
   formatApiLoadError,
   mapPatientsToRows,
+  openLatestVisitOrStart,
   startSessionForPatient,
 } from '../../lib/api.js';
 import { getInitials } from '../../lib/buildPatient.js';
@@ -112,16 +113,19 @@ export default function DashboardPage() {
     ? patients.slice(0, 3)
     : REGISTRY_PATIENTS.filter((p) => p.risk === 'high').slice(0, 3);
 
-  async function openSessionForPatientId(patientId) {
+  async function openSessionForPatientId(patientId, mode = 'open') {
     if (opening) return;
     setOpening(true);
     setLoadError('');
     try {
-      const visitId = await startSessionForPatient(patientId);
+      const visitId =
+        mode === 'new'
+          ? await startSessionForPatient(patientId)
+          : await openLatestVisitOrStart(patientId);
       navigate(`/session/${visitId}`);
     } catch (err) {
       console.error('[DashboardPage] failed to open session:', err);
-      setLoadError('Could not start a session for this patient.');
+      setLoadError('Could not open a session for this patient.');
     } finally {
       setOpening(false);
     }
@@ -201,14 +205,24 @@ export default function DashboardPage() {
                       {TRAJECTORY_LABELS[patient.trajectory] ?? patient.trajectory}
                     </span>
                   </div>
-                  <button
-                    type="button"
-                    className="dashboard-page__view-link"
-                    disabled={opening}
-                    onClick={() => openSessionForPatientId(patient.id)}
-                  >
-                    {opening ? 'Starting…' : 'Start session →'}
-                  </button>
+                  <div className="dashboard-page__active-actions">
+                    <button
+                      type="button"
+                      className="dashboard-page__view-link"
+                      disabled={opening}
+                      onClick={() => openSessionForPatientId(patient.id, 'open')}
+                    >
+                      {opening ? 'Opening…' : 'Open chart →'}
+                    </button>
+                    <button
+                      type="button"
+                      className="dashboard-page__new-link"
+                      disabled={opening}
+                      onClick={() => openSessionForPatientId(patient.id, 'new')}
+                    >
+                      New session
+                    </button>
+                  </div>
                 </article>
               ))}
             </div>

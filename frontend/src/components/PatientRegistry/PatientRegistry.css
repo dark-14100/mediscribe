@@ -211,6 +211,48 @@
   vertical-align: middle;
 }
 
+.registry-table__actions {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.registry-table__new-btn {
+  padding: 0.375rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-primary);
+  font-family: inherit;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.12s, background 0.12s, border-color 0.12s;
+}
+
+.registry-table__row:hover .registry-table__new-btn,
+.registry-table__row:focus .registry-table__new-btn,
+.registry-table__row:focus-within .registry-table__new-btn {
+  opacity: 1;
+}
+
+.registry-table__new-btn:hover:not(:disabled) {
+  background: var(--color-primary-light);
+  border-color: rgba(26, 138, 122, 0.3);
+}
+
+.registry-table__new-btn:disabled {
+  opacity: 1;
+  cursor: wait;
+  color: var(--color-text-muted);
+}
+
+@media (hover: none) {
+  .registry-table__new-btn {
+    opacity: 1;
+  }
+}
+
 .registry-table__patient {
   display: flex;
   align-items: center;

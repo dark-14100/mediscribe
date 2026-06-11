@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { startSessionForPatient } from '../../lib/api.js';
+import { openLatestVisitOrStart, startSessionForPatient } from '../../lib/api.js';
 import { countActiveFilters, DEFAULT_FILTERS, filterPatients } from '../../lib/filterPatients.js';
 import './PatientRegistry.css';
 
@@ -26,19 +26,31 @@ export default function PatientRegistry({
   const isEmpty = filteredPatients.length === 0;
   const highRisk = patients.filter((p) => p.risk === 'high').length;
 
-  async function handleRowClick(patientId) {
+  async function openSession(patientId, mode) {
     if (openingId) return;
     setOpeningId(patientId);
     setOpenError('');
     try {
-      const visitId = await startSessionForPatient(patientId);
+      const visitId =
+        mode === 'new'
+          ? await startSessionForPatient(patientId)
+          : await openLatestVisitOrStart(patientId);
       navigate(`/session/${visitId}`);
     } catch (err) {
       console.error('[PatientRegistry] failed to open session:', err);
-      setOpenError('Could not start a session. Check that you are signed in and the API is reachable.');
+      setOpenError('Could not open a session. Check that you are signed in and the API is reachable.');
     } finally {
       setOpeningId(null);
     }
+  }
+
+  function handleRowClick(patientId) {
+    openSession(patientId, 'open');
+  }
+
+  function handleNewSession(event, patientId) {
+    event.stopPropagation();
+    openSession(patientId, 'new');
   }
 
   return (
@@ -123,6 +135,7 @@ export default function PatientRegistry({
                 <th>RISK</th>
                 <th>VISITS</th>
                 <th>LAST SEEN</th>
+                <th aria-label="Actions" />
               </tr>
             </thead>
             <tbody>
@@ -169,6 +182,16 @@ export default function PatientRegistry({
                   </td>
                   <td className="registry-table__visits">{patient.visits}</td>
                   <td className="registry-table__last-seen">{patient.lastSeen}</td>
+                  <td className="registry-table__actions">
+                    <button
+                      type="button"
+                      className="registry-table__new-btn"
+                      onClick={(e) => handleNewSession(e, patient.id)}
+                      disabled={openingId === patient.id}
+                    >
+                      {openingId === patient.id ? 'Opening…' : '+ New session'}
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>

@@ -260,6 +260,7 @@ export async function createPatient(payload) {
   return res.json();
 }
 
+/** Always create a NEW visit for the patient; returns the new visit id. */
 export async function startSessionForPatient(patientId) {
   const apiBase = import.meta.env.VITE_API_URL;
   const isDemoId = isDemoRegistryId(patientId);
@@ -275,4 +276,23 @@ export async function startSessionForPatient(patientId) {
   });
   const visit = await res.json();
   return visit.id;
+}
+
+/**
+ * Open the patient's most recent visit, or start a new one if they have none.
+ * Returns the visit id to navigate to.
+ */
+export async function openLatestVisitOrStart(patientId) {
+  const apiBase = import.meta.env.VITE_API_URL;
+  const isDemoId = isDemoRegistryId(patientId);
+
+  if (!apiBase || isDemoId) {
+    return patientId;
+  }
+
+  const visits = await fetchPatientVisits(patientId); // newest first, [] on failure
+  if (visits.length > 0) {
+    return visits[0].id;
+  }
+  return startSessionForPatient(patientId);
 }
