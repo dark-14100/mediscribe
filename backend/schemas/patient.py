@@ -43,6 +43,7 @@ class PatientSummary(BaseModel):
     dob: date
     gender: str
     last_visit_dates: list[datetime] = Field(default_factory=list)
+    visit_count: int = 0
     allergies: list[str] = Field(default_factory=list)
     active_medications: list[str] = Field(default_factory=list)
     trajectory_direction: str | None = None
@@ -58,7 +59,20 @@ class PatientSummary(BaseModel):
     def _coerce_visit_dates(cls, value: Any) -> list[Any]:
         return coerce_json_list(value)
 
-    @field_validator("trajectory_confidence", mode="before")
+    @field_validator("visit_count", "trajectory_confidence", mode="before")
     @classmethod
     def _coerce_trajectory_confidence(cls, value: Any) -> int | None:
         return coerce_optional_int(value)
+
+
+class PatientListItem(PatientRead):
+    """A patient row optionally enriched with summary metadata.
+
+    Returned by GET /patients?include=summary so the registry/dashboard can
+    render trajectory + visit counts in a single request (no per-patient fan-out).
+    """
+
+    visit_count: int = 0
+    last_visit_dates: list[datetime] = Field(default_factory=list)
+    trajectory_direction: str | None = None
+    trajectory_confidence: int | None = None

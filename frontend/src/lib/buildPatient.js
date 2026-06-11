@@ -73,7 +73,7 @@ export function mapApiPatientToRow(patient, summary = null) {
   const trajectory = summary
     ? mapTrajectoryDirection(summary.trajectory_direction)
     : 'stable';
-  const visits = summary?.last_visit_dates?.length ?? 0;
+  const visits = summary?.visit_count ?? summary?.last_visit_dates?.length ?? 0;
   const risk = deriveRisk(trajectory, visits);
   const lastSeen = summary ? formatLastSeenFromDates(summary.last_visit_dates) : '—';
 

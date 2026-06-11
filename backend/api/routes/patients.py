@@ -6,9 +6,9 @@ import logging
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import ValidationError
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, require_doctor
@@ -17,7 +17,12 @@ from db.session import get_db
 from models.patient import Patient
 from models.user import User
 from models.visit import Visit
-from schemas.patient import PatientCreate, PatientRead, PatientSummary
+from schemas.patient import (
+    PatientCreate,
+    PatientListItem,
+    PatientRead,
+    PatientSummary,
+)
 from services.cache import CacheClient, get_cache, patient_summary_key
 
 log = logging.getLogger("medscribe.patients")
@@ -62,25 +67,82 @@ async def create_patient(
     return PatientRead.model_validate(patient)
 
 
-@router.get("/", response_model=list[PatientRead], include_in_schema=False)
+@router.get("/", response_model=list[PatientListItem], include_in_schema=False)
 async def list_patients_trailing_slash(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[PatientRead]:
+    include: Annotated[str | None, Query()] = None,
+) -> list[PatientListItem]:
     """Some clients request ``/patients/``; avoid matching ``/{patient_id}`` with an empty id."""
-    return await list_patients(user, db)
+    return await list_patients(user, db, include)
 
 
-@router.get("", response_model=list[PatientRead])
+@router.get("", response_model=list[PatientListItem])
 async def list_patients(
     user: Annotated[User, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(get_db)],
-) -> list[PatientRead]:
+    include: Annotated[str | None, Query()] = None,
+) -> list[PatientListItem]:
+    """List the doctor's patients.
+
+    Pass ``?include=summary`` to enrich each row with trajectory + visit-count
+    metadata in a single batched query (avoids per-patient summary fan-out).
+    """
     stmt = select(Patient).order_by(Patient.created_at.desc())
     if not _is_admin(user):
         stmt = stmt.where(Patient.doctor_id == user.id)
-    result = await db.scalars(stmt)
-    return [PatientRead.model_validate(p) for p in result.all()]
+    patients = (await db.scalars(stmt)).all()
+
+    if include != "summary" or not patients:
+        return [PatientListItem.model_validate(p) for p in patients]
+
+    # One query for every visit belonging to these patients, newest first per
+    # patient — reduced in Python into count / last-3-dates / latest trajectory.
+    patient_ids = [p.id for p in patients]
+    visits_stmt = (
+        select(
+            Visit.patient_id,
+            Visit.visit_date,
+            Visit.trajectory_direction,
+            Visit.trajectory_score,
+        )
+        .where(Visit.patient_id.in_(patient_ids))
+        .order_by(Visit.patient_id, desc(Visit.visit_date))
+    )
+    summary: dict = {}
+    for row in (await db.execute(visits_stmt)).all():
+        entry = summary.get(row.patient_id)
+        if entry is None:
+            # First (newest) row for this patient holds the latest trajectory.
+            entry = {
+                "count": 0,
+                "dates": [],
+                "direction": row.trajectory_direction,
+                "score": row.trajectory_score,
+            }
+            summary[row.patient_id] = entry
+        entry["count"] += 1
+        if len(entry["dates"]) < 3:
+            entry["dates"].append(row.visit_date)
+
+    items: list[PatientListItem] = []
+    for p in patients:
+        item = PatientListItem.model_validate(p)
+        s = summary.get(p.id)
+        if s:
+            score = s["score"]
+            item = item.model_copy(
+                update={
+                    "visit_count": s["count"],
+                    "last_visit_dates": s["dates"],
+                    "trajectory_direction": s["direction"],
+                    "trajectory_confidence": (
+                        int(round(score)) if score is not None else None
+                    ),
+                }
+            )
+        items.append(item)
+    return items
 
 
 @router.get("/{patient_id}", response_model=PatientRead)
@@ -134,6 +196,10 @@ async def get_patient_summary(
     recent_visits = (await db.execute(visits_stmt)).all()
     last_visit_dates = [row.visit_date for row in recent_visits]
 
+    visit_count = await db.scalar(
+        select(func.count()).select_from(Visit).where(Visit.patient_id == patient.id)
+    )
+
     latest_trajectory_direction: str | None = None
     latest_trajectory_score: float | None = None
     if recent_visits:
@@ -152,6 +218,7 @@ async def get_patient_summary(
         dob=patient.dob,
         gender=patient.gender,
         last_visit_dates=last_visit_dates,
+        visit_count=visit_count or 0,
         allergies=list(patient.allergies or []),
         active_medications=list(patient.active_medications or []),
         trajectory_direction=latest_trajectory_direction,

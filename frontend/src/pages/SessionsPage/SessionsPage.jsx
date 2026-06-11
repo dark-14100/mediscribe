@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import AppNav from '../../components/AppNav/AppNav';
-import { fetchAllDoctorVisits } from '../../lib/api.js';
+import { fetchRecentVisits } from '../../lib/api.js';
 import { getInitials } from '../../lib/buildPatient.js';
 import './SessionsPage.css';
 
@@ -88,7 +88,7 @@ export default function SessionsPage() {
     (async () => {
       setLoading(true);
       try {
-        const visits = await fetchAllDoctorVisits();
+        const visits = await fetchRecentVisits(100);
         if (cancelled) return;
         setSessions(
           visits.map((v) => ({

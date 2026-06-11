@@ -6,8 +6,8 @@ import AppNav from '../../components/AppNav/AppNav';
 import PatientRegistry from '../../components/PatientRegistry/PatientRegistry';
 import {
   createPatient,
-  enrichPatientRows,
   fetchPatients,
+  fetchPatientsWithSummary,
   formatApiLoadError,
   mapPatientsToRows,
 } from '../../lib/api.js';
@@ -35,7 +35,7 @@ export default function PatientsPage() {
       setPatients(mapPatientsToRows(raw));
       setLoading(false);
       try {
-        setPatients(await enrichPatientRows(raw));
+        setPatients(await fetchPatientsWithSummary());
       } catch (enrichErr) {
         console.warn('[PatientsPage] enrich failed:', enrichErr);
       }

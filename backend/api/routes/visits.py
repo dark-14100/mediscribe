@@ -15,7 +15,7 @@ from db.session import get_db
 from models.patient import Patient
 from models.user import User
 from models.visit import Visit
-from schemas.visit import VisitCreate, VisitRead
+from schemas.visit import RecentVisitRead, VisitCreate, VisitRead
 from services.visit_normalize import normalize_visit
 
 log = logging.getLogger("medscribe.visits")
@@ -94,8 +94,41 @@ async def create_visit(
     return VisitRead.model_validate(visit)
 
 
-# NOTE: /patient/{id} must be registered before /{visit_id} — otherwise FastAPI
-# treats the path segment "patient" as a visit UUID and returns 422.
+# NOTE: literal paths (/recent, /patient/...) must be registered before the
+# /{visit_id} param route — otherwise FastAPI treats them as a visit UUID.
+@router.get("/recent", response_model=list[RecentVisitRead])
+async def list_recent_visits(
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    limit: int = Query(default=20, ge=1, le=100),
+) -> list[RecentVisitRead]:
+    """The doctor's most recent visits across all patients, newest first.
+
+    Single join query — avoids the per-patient visit fan-out the client used to
+    do. Reads only scalar columns, so corrupt JSON blobs can't break the list.
+    """
+    stmt = select(Visit, Patient.full_name, Patient.gender).join(
+        Patient, Visit.patient_id == Patient.id
+    )
+    if not _is_admin(user):
+        stmt = stmt.where(Visit.doctor_id == user.id)
+    stmt = stmt.order_by(desc(Visit.visit_date)).limit(limit)
+
+    rows = (await db.execute(stmt)).all()
+    return [
+        RecentVisitRead(
+            id=visit.id,
+            patient_id=visit.patient_id,
+            patient_name=name,
+            patient_gender=gender,
+            visit_date=visit.visit_date,
+            is_signed=visit.is_signed,
+            compliance_status=visit.compliance_status,
+        )
+        for visit, name, gender in rows
+    ]
+
+
 @router.get("/patient/{patient_id}", response_model=list[VisitRead])
 async def list_patient_visits(
     patient_id: UUID,

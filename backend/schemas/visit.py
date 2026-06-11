@@ -18,6 +18,21 @@ class VisitCreate(BaseModel):
     patient_id: uuid.UUID
 
 
+class RecentVisitRead(BaseModel):
+    """Lightweight visit row for cross-patient lists (sessions / dashboard).
+
+    Carries the patient name so the client doesn't need a per-patient lookup.
+    """
+
+    id: uuid.UUID
+    patient_id: uuid.UUID
+    patient_name: str
+    patient_gender: str | None = None
+    visit_date: datetime
+    is_signed: bool = False
+    compliance_status: str | None = None
+
+
 class NoteSaveRequest(BaseModel):
     """Body of POST /notes/save — the (possibly doctor-edited) SOAP note."""
 

@@ -3,9 +3,9 @@ import { Link, useNavigate } from 'react-router-dom';
 import AppNav from '../AppNav/AppNav';
 import { useAuth } from '../../lib/authContext.js';
 import {
-  enrichPatientRows,
-  fetchAllDoctorVisits,
   fetchPatients,
+  fetchPatientsWithSummary,
+  fetchRecentVisits,
   formatApiLoadError,
   mapPatientsToRows,
   openLatestVisitOrStart,
@@ -65,15 +65,15 @@ export default function DashboardPage() {
         setPatients(mapPatientsToRows(raw));
         setLoading(false);
 
-        enrichPatientRows(raw)
+        fetchPatientsWithSummary()
           .then((enriched) => {
             if (!cancelled) setPatients(enriched);
           })
           .catch((err) => console.warn('[DashboardPage] enrich failed:', err));
 
-        fetchAllDoctorVisits()
+        fetchRecentVisits(5)
           .then((visits) => {
-            if (!cancelled) setRecentVisits(visits.slice(0, 5));
+            if (!cancelled) setRecentVisits(visits);
           })
           .catch((err) => console.warn('[DashboardPage] visits load failed:', err));
       } catch (err) {

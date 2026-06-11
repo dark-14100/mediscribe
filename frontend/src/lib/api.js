@@ -152,26 +152,20 @@ export function mapPatientsToRows(patients) {
   return sortPatientsForDisplay(patients.map((p) => mapApiPatientToRow(p)));
 }
 
-/** Add trajectory / visit metadata; never throws — falls back per patient. */
-export async function enrichPatientRows(patients) {
-  const rows = await Promise.all(
-    patients.map(async (patient) => {
-      try {
-        const summary = await fetchPatientSummary(patient.id);
-        return mapApiPatientToRow(patient, summary);
-      } catch (err) {
-        console.warn('[api] summary failed for patient', patient.id, err);
-        return mapApiPatientToRow(patient);
-      }
-    }),
-  );
-  return sortPatientsForDisplay(rows);
+/**
+ * Patients enriched with trajectory + visit metadata in a SINGLE request
+ * (GET /patients?include=summary). Each item carries both the patient fields
+ * and the summary fields, so we map it as both.
+ */
+export async function fetchPatientsWithSummary() {
+  const res = await apiFetch('/patients?include=summary', {}, { retries: 2 });
+  const items = await res.json();
+  return sortPatientsForDisplay(items.map((item) => mapApiPatientToRow(item, item)));
 }
 
 /** Patients plus per-patient summary (trajectory, visit count, last seen). */
 export async function fetchPatientsEnriched() {
-  const patients = await fetchPatients();
-  return enrichPatientRows(patients);
+  return fetchPatientsWithSummary();
 }
 
 /** User-facing message for a failed patient/dashboard load. */
@@ -218,27 +212,13 @@ export async function fetchPatientVisits(patientId) {
   }
 }
 
-/** All visits for the current doctor (via each patient). */
-export async function fetchAllDoctorVisits() {
-  const patients = await fetchPatients();
-  const lists = await Promise.all(
-    patients.map(async (p) => {
-      try {
-        const visits = await fetchPatientVisits(p.id);
-        return visits.map((v) => ({
-          ...v,
-          patient_name: p.full_name,
-          patient_gender: p.gender,
-        }));
-      } catch (err) {
-        console.warn('[api] visits for patient failed', p.id, err);
-        return [];
-      }
-    }),
-  );
-  return lists
-    .flat()
-    .sort((a, b) => new Date(b.visit_date) - new Date(a.visit_date));
+/**
+ * Most recent visits across all of the doctor's patients, newest first,
+ * in a SINGLE request (GET /visits/recent). Each row carries patient_name.
+ */
+export async function fetchRecentVisits(limit = 20) {
+  const res = await apiFetch(`/visits/recent?limit=${limit}`, {}, { retries: 2 });
+  return res.json();
 }
 
 /**
