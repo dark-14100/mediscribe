@@ -53,6 +53,11 @@ def _build_storage_for_worker() -> StorageClient:
             bucket_name=settings.BACKBLAZE_BUCKET,
         )
     except Exception as exc:  # noqa: BLE001
+        # In production, in-memory storage silently discards audio — fail closed
+        # (the Celery task will retry) instead of pretending the upload worked.
+        if settings.is_production:
+            log.error("[tasks] worker B2 misconfigured in production: %s", exc)
+            raise
         log.warning(
             "[tasks] worker B2 init failed (%s) — using in-memory storage fallback", exc
         )

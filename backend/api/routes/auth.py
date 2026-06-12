@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user
+from core.constants import DOCTOR_ROLE
 from core.security import create_access_token, hash_password, verify_password
 from db.session import get_db
 from models.user import User
@@ -25,6 +26,15 @@ async def register(
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
 ) -> User:
+    # Public registration may only create doctors. Elevated roles (admin) bypass
+    # tenant isolation and must be provisioned out-of-band (seed/migration/CLI),
+    # never self-assigned through an unauthenticated endpoint.
+    if payload.role != DOCTOR_ROLE:
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="Cannot self-register with an elevated role",
+        )
+
     existing = await db.scalar(select(User).where(User.email == payload.email))
     if existing is not None:
         raise HTTPException(
@@ -35,7 +45,7 @@ async def register(
         email=payload.email,
         hashed_password=hash_password(payload.password),
         full_name=payload.full_name,
-        role=payload.role,
+        role=DOCTOR_ROLE,
     )
     db.add(user)
     await db.commit()

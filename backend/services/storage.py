@@ -115,7 +115,13 @@ def get_storage() -> StorageClient:
                 bucket_name=settings.BACKBLAZE_BUCKET,
             )
             log.info("[storage] B2Storage initialised bucket=%s", settings.BACKBLAZE_BUCKET)
-        except (ValueError, Exception) as exc:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # In production, refuse to silently fall back to non-persistent
+            # in-memory storage — that would drop patient audio while looking
+            # healthy. Fail closed so the misconfiguration is visible.
+            if settings.is_production:
+                log.error("[storage] B2 misconfigured in production: %s", exc)
+                raise
             log.warning(
                 "[storage] B2 credentials missing or auth failed (%s); "
                 "falling back to in-memory storage. Audio URLs will not be persistent.",

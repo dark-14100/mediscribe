@@ -9,12 +9,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from core.config import settings
+
 # --- Transcription ---
 
 
 class TranscriptLine(BaseModel):
     speaker: Literal["doctor", "patient"]
-    text: str
+    text: str = Field(max_length=settings.MAX_TRANSCRIPT_LINE_CHARS)
     line_index: int
 
 
@@ -125,7 +127,9 @@ class TranscribeResponse(BaseModel):
 
 class PipelineRunRequest(BaseModel):
     visit_id: uuid.UUID
-    transcript: list[TranscriptLine] = Field(default_factory=list)
+    transcript: list[TranscriptLine] = Field(
+        default_factory=list, max_length=settings.MAX_TRANSCRIPT_LINES
+    )
 
 
 # --- Final pipeline payload ---

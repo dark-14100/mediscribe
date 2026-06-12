@@ -67,6 +67,30 @@ from services.event_bus import EventBus, get_event_bus
 log = logging.getLogger("medscribe.pipeline")
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
 
+# Audio MIME types we accept for transcription. Browsers typically send
+# audio/webm (MediaRecorder); the rest cover common manual uploads.
+_ALLOWED_AUDIO_TYPES: frozenset[str] = frozenset(
+    {
+        "audio/webm",
+        "audio/ogg",
+        "audio/wav",
+        "audio/x-wav",
+        "audio/wave",
+        "audio/mpeg",
+        "audio/mp3",
+        "audio/mp4",
+        "audio/m4a",
+        "audio/x-m4a",
+        "audio/aac",
+        "audio/flac",
+        "application/octet-stream",
+    }
+)
+
+
+def _is_allowed_audio_type(content_type: str) -> bool:
+    return content_type in _ALLOWED_AUDIO_TYPES
+
 
 # ---------------------------------------------------------------------------
 # AI service resolution
@@ -197,9 +221,24 @@ async def transcribe(
     service to get a diarised transcript, and (asynchronously) queues a B2
     upload that will populate ``visits.audio_url`` once complete.
     """
+    content_type = (audio.content_type or "").split(";")[0].strip().lower()
+    if content_type and not _is_allowed_audio_type(content_type):
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported audio format",
+        )
+
     audio_bytes = await audio.read()
     if not audio_bytes:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, detail="Empty audio upload")
+    if len(audio_bytes) > settings.MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=(
+                "Audio upload exceeds the maximum allowed size "
+                f"({settings.MAX_AUDIO_UPLOAD_BYTES // (1024 * 1024)} MB)."
+            ),
+        )
 
     # Confirm caller owns the visit (if a visit_id was supplied).
     if visit_id is not None:
@@ -218,10 +257,12 @@ async def transcribe(
     try:
         transcript = await transcribe_fn(audio_bytes)
     except Exception as exc:
+        # Log the upstream detail server-side; return a generic message so we
+        # don't leak provider/internal error text to the client.
         log.exception("[pipeline] transcription failed")
         raise HTTPException(
             status.HTTP_502_BAD_GATEWAY,
-            detail=f"Transcription failed: {exc}",
+            detail="Transcription failed. Please try again.",
         ) from exc
 
     if not transcript:
@@ -528,8 +569,12 @@ async def run(
         await bus.publish(visit_id_str, EVENT_ERROR, {"detail": exc.detail})
         raise
     except Exception as exc:
+        # Log the real error server-side; surface only a generic message over
+        # SSE and HTTP so internal details aren't exposed to the client.
         log.exception("[pipeline] run failed visit_id=%s", visit.id)
-        await bus.publish(visit_id_str, EVENT_ERROR, {"detail": str(exc)})
+        await bus.publish(
+            visit_id_str, EVENT_ERROR, {"detail": "Pipeline execution failed"}
+        )
         raise HTTPException(
             status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Pipeline execution failed"
         ) from exc

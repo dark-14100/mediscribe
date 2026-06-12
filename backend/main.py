@@ -34,12 +34,33 @@ async def lifespan(_: FastAPI):
     log.info("[main] MedScribe API shutting down")
 
 
+def _validate_production_secrets() -> None:
+    """Fail fast if production is running with a weak/placeholder JWT secret."""
+    if not settings.is_production:
+        return
+    secret = settings.JWT_SECRET_KEY or ""
+    weak_markers = ("change_me", "test-secret", "secret", "changeme")
+    if len(secret) < 32 or any(marker in secret.lower() for marker in weak_markers):
+        raise RuntimeError(
+            "JWT_SECRET_KEY is missing, too short, or a placeholder. "
+            "Set a strong (>=32 char) random secret in production."
+        )
+
+
 def create_app() -> FastAPI:
+    _validate_production_secrets()
+
+    # Hide interactive API docs / schema in production to reduce attack surface.
+    docs_kwargs: dict[str, str | None] = {}
+    if settings.is_production:
+        docs_kwargs = {"docs_url": None, "redoc_url": None, "openapi_url": None}
+
     app = FastAPI(
         title="MedScribe AI",
         version="0.1.0",
         description="Intelligent medical documentation + longitudinal intelligence platform.",
         lifespan=lifespan,
+        **docs_kwargs,
     )
 
     app.add_middleware(

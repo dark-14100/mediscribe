@@ -24,7 +24,11 @@ async def get_current_user(
     try:
         payload = decode_access_token(token)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        # Don't echo the underlying JWT error (algorithm/signature/expiry detail)
+        # back to the client; log it and return a generic message.
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"
+        ) from exc
 
     user_id_raw = payload.get("sub")
     if not user_id_raw:
@@ -67,7 +71,9 @@ async def get_current_user_sse(
     try:
         payload = decode_access_token(raw_token)
     except ValueError as exc:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+        raise HTTPException(
+            status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"
+        ) from exc
 
     user_id_raw = payload.get("sub")
     if not user_id_raw:

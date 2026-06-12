@@ -16,6 +16,12 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # --- Runtime environment ---
+    # "development" (default), "test", or "production". Controls fail-closed
+    # behaviours: disabling API docs, refusing weak secrets, and refusing to
+    # silently fall back to in-memory audio storage.
+    ENVIRONMENT: str = "development"
+
     # --- Database ---
     DATABASE_URL: str
 
@@ -48,12 +54,21 @@ class Settings(BaseSettings):
     DRIFT_THRESHOLD: float = 0.25
     COGNITIVE_LOAD_THRESHOLD: int = 6
 
+    # --- Upload / payload limits (abuse + DoS guards) ---
+    MAX_AUDIO_UPLOAD_BYTES: int = 25 * 1024 * 1024  # 25 MB
+    MAX_TRANSCRIPT_LINES: int = 5000
+    MAX_TRANSCRIPT_LINE_CHARS: int = 10_000
+
     # --- HTTP / CORS ---
     CORS_ORIGINS: str = "http://localhost:3000"
 
     @property
     def cors_origins_list(self) -> list[str]:
         return [origin.strip() for origin in self.CORS_ORIGINS.split(",") if origin.strip()]
+
+    @property
+    def is_production(self) -> bool:
+        return self.ENVIRONMENT.strip().lower() in {"production", "prod"}
 
 
 @lru_cache(maxsize=1)

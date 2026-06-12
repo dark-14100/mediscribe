@@ -53,6 +53,21 @@ async def test_register_rejects_invalid_role(client):
 
 
 @pytest.mark.asyncio
+async def test_register_rejects_admin_self_assignment(client):
+    """Public registration must not let a caller self-assign an elevated role."""
+    resp = await client.post(
+        "/auth/register",
+        json={
+            "email": "sneaky@example.com",
+            "password": "password123",
+            "full_name": "Dr. Sneaky",
+            "role": "admin",
+        },
+    )
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
 async def test_register_duplicate_email_returns_409(client):
     payload = {
         "email": "dup@example.com",

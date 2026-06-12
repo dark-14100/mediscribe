@@ -223,6 +223,16 @@ async def test_transcribe_rejects_empty_audio(client, doctor_user):
     assert resp.status_code == 400
 
 
+@pytest.mark.asyncio
+async def test_transcribe_rejects_unsupported_content_type(client, doctor_user):
+    resp = await client.post(
+        "/pipeline/transcribe",
+        headers=auth_header(doctor_user),
+        files={"audio": ("clip.txt", b"not audio", "text/plain")},
+    )
+    assert resp.status_code == 415
+
+
 # ---------------------------------------------------------------------------
 # /pipeline/run + SSE stream
 # ---------------------------------------------------------------------------
