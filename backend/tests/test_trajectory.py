@@ -51,7 +51,6 @@ def _make_visit(
 
 def _series(dates: list[datetime], **kwargs_per_visit) -> list[Visit]:
     """Build a chronologically ordered list of visits from parallel arrays."""
-    n = len(dates)
     fields = {k: v for k, v in kwargs_per_visit.items() if isinstance(v, list)}
     visits = []
     for i, d in enumerate(dates):

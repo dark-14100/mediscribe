@@ -61,7 +61,7 @@ async def test_diagnose_parses_and_sorts_differentials():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.differential_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await diagnose(_chest_pain_soap())
 
     assert len(result) == 3
@@ -86,7 +86,7 @@ async def test_diagnose_filters_invalid_contributing_fields():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.differential_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await diagnose(_chest_pain_soap())
 
     assert len(result) == 1
@@ -100,7 +100,7 @@ async def test_diagnose_empty_list():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.differential_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await diagnose(_chest_pain_soap())
 
     assert result == []

@@ -52,7 +52,7 @@ async def test_detect_parses_anomalies():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.anomaly_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await detect(
             _sample_soap(),
             ["Date: 2025-01-01 | Similarity: 0.9\nAssessment: Stable angina\nPlan: Continue meds"],
@@ -73,7 +73,7 @@ async def test_detect_empty_anomalies_array():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.anomaly_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await detect(_sample_soap(), [], [])
 
     assert result == []
@@ -92,7 +92,7 @@ async def test_detect_skips_invalid_items():
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=None)
 
-    with patch("services.anomaly_agent.httpx.AsyncClient", return_value=mock_client):
+    with patch("services.groq_retry.httpx.AsyncClient", return_value=mock_client):
         result = await detect(_sample_soap(), [], ["metformin"])
 
     assert len(result) == 1

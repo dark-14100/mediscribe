@@ -9,15 +9,11 @@ import json
 import logging
 from typing import Any
 
-import httpx
-
-from core.config import settings
 from schemas.pipeline import Differential, SOAPFieldName, SOAPNote
-from services.groq_retry import call_with_retries
+from services.groq_retry import chat_completion
 
 logger = logging.getLogger(__name__)
 
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 VALID_FIELDS: set[str] = {"subjective", "objective", "assessment", "plan"}
@@ -112,39 +108,17 @@ async def diagnose(soap_note: SOAPNote | dict[str, Any]) -> list[Differential]:
 
     logger.info("[DIFFERENTIAL_AGENT] Starting differential diagnosis")
 
-    async def _request() -> httpx.Response:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                GROQ_CHAT_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.1,
-                    "max_tokens": 1000,
-                },
-                timeout=settings.GROQ_TIMEOUT_SECONDS,
-            )
-        if response.status_code != 200:
-            logger.error(
-                "[DIFFERENTIAL_AGENT] Groq API error %s: %s",
-                response.status_code,
-                response.text,
-            )
-            response.raise_for_status()
-        return response
-
     try:
-        response = await call_with_retries(_request, label="differential_agent")
-
-        data = response.json()
+        data = await chat_completion(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1000,
+            label="differential_agent",
+        )
         choices = data.get("choices") or []
         if not choices:
             raise ValueError("Groq returned no completion choices")

@@ -13,15 +13,13 @@ from __future__ import annotations
 import json
 import logging
 
-import httpx
-
-from core.config import settings
 from schemas.pipeline import BiasFlag, SOAPNote
-from services.groq_retry import call_with_retries
+from services.groq_retry import GROQ_CHAT_URL, chat_completion
 
 log = logging.getLogger("medscribe.bias_review")
 
-GROQ_URL = "https://api.groq.com/openai/v1/chat/completions"
+# Alias kept for backwards-compat (tests import GROQ_URL from this module).
+GROQ_URL = GROQ_CHAT_URL
 GROQ_MODEL = "llama-3.1-8b-instant"
 
 VALID_BIAS_TYPES = frozenset({"gender_bias", "age_bias", "socioeconomic_bias"})
@@ -93,38 +91,16 @@ async def review(soap_note: SOAPNote) -> list[BiasFlag]:
     user_message = _build_user_message(soap_note)
     log.info("[bias_review] sending SOAP note for bias review")
 
-    async def _request() -> httpx.Response:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                GROQ_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.1,
-                    "max_tokens": 600,
-                },
-                timeout=settings.GROQ_TIMEOUT_SECONDS,
-            )
-        if response.status_code != 200:
-            log.error(
-                "[bias_review] Groq API error %s: %s",
-                response.status_code,
-                response.text,
-            )
-            response.raise_for_status()
-        return response
-
-    response = await call_with_retries(_request, label="bias_review")
-
-    data = response.json()
+    data = await chat_completion(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        response_format={"type": "json_object"},
+        max_tokens=600,
+        label="bias_review",
+    )
     choices = data.get("choices") or []
     if not choices:
         log.warning("[bias_review] Groq returned no choices — returning empty list")

@@ -59,7 +59,6 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
       streamRef.current?.getTracks().forEach((t) => t.stop());
       stopMeter();
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   function startMeter(stream) {

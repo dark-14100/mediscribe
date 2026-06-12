@@ -4,14 +4,10 @@ import json
 import logging
 from typing import Any
 
-import httpx
-
-from core.config import settings
-from services.groq_retry import call_with_retries
+from services.groq_retry import chat_completion
 
 logger = logging.getLogger(__name__)
 
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 SOAP_KEYS = ("subjective", "objective", "assessment", "plan")
 
@@ -86,48 +82,21 @@ def _parse_llm_content(content: str) -> dict[str, Any]:
     return parsed
 
 
-async def _request_soap_completion(user_message: str) -> httpx.Response:
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            GROQ_CHAT_URL,
-            headers={
-                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": GROQ_MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_message},
-                ],
-                "response_format": {"type": "json_object"},
-                "temperature": 0.1,
-                "max_tokens": 1000,
-            },
-            timeout=settings.GROQ_TIMEOUT_SECONDS,
-        )
-
-    if response.status_code != 200:
-        logger.error(
-            "[SOAP_GENERATOR] Groq API error %s: %s",
-            response.status_code,
-            response.text,
-        )
-        response.raise_for_status()
-    return response
-
-
 async def generate_soap(transcript: list[Any]) -> dict:
     logger.info("[SOAP_GENERATOR] Starting SOAP generation")
     try:
         user_message = _format_transcript_for_prompt(transcript)
 
-        response = await call_with_retries(
-            lambda: _request_soap_completion(user_message),
+        data = await chat_completion(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": user_message},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1000,
             label="soap_generator",
         )
-
-        data = response.json()
         choices = data.get("choices") or []
         if not choices:
             raise ValueError("Groq returned no completion choices")

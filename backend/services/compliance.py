@@ -13,16 +13,13 @@ from __future__ import annotations
 import json
 import logging
 
-import httpx
-
-from core.config import settings
 from core.constants import HIPAA_DOCUMENTATION_CHECKLIST, ICD10_PRIMARY_CARE
-from services.groq_retry import call_with_retries
-from schemas.pipeline import ComplianceNote, ComplianceResult, ComplianceStatus, SOAPNote
+from services.groq_retry import chat_completion
+from services.groq_retry import GROQ_CHAT_URL as GROQ_CHAT_URL  # re-export for tests
+from schemas.pipeline import ComplianceNote, ComplianceResult, SOAPNote
 
 log = logging.getLogger("medscribe.compliance")
 
-GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 GROQ_MODEL = "llama-3.3-70b-versatile"
 
 VALID_STATUSES: frozenset[str] = frozenset({"pass", "warn", "fail"})
@@ -138,38 +135,16 @@ async def check(soap_note: SOAPNote) -> ComplianceResult:
     user_message = _build_user_message(soap_note)
     log.info("[compliance] checking SOAP note for compliance")
 
-    async def _request() -> httpx.Response:
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                GROQ_CHAT_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.1,
-                    "max_tokens": 800,
-                },
-                timeout=settings.GROQ_TIMEOUT_SECONDS,
-            )
-        if response.status_code != 200:
-            log.error(
-                "[compliance] Groq API error %s: %s",
-                response.status_code,
-                response.text,
-            )
-            response.raise_for_status()
-        return response
-
-    response = await call_with_retries(_request, label="compliance")
-
-    data = response.json()
+    data = await chat_completion(
+        model=GROQ_MODEL,
+        messages=[
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": user_message},
+        ],
+        response_format={"type": "json_object"},
+        max_tokens=800,
+        label="compliance",
+    )
     choices = data.get("choices") or []
     if not choices:
         log.warning("[compliance] Groq returned no choices — defaulting to warn")
