@@ -52,6 +52,7 @@ export default function DashboardPage() {
   const [opening, setOpening] = useState(false);
   const [patients, setPatients] = useState(USE_API ? [] : REGISTRY_PATIENTS);
   const [recentVisits, setRecentVisits] = useState([]);
+  const [recentError, setRecentError] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(USE_API);
 
@@ -61,6 +62,7 @@ export default function DashboardPage() {
     (async () => {
       setLoading(true);
       setLoadError('');
+      setRecentError(false);
       try {
         const raw = await fetchPatients();
         if (cancelled) return;
@@ -77,7 +79,10 @@ export default function DashboardPage() {
           .then((visits) => {
             if (!cancelled) setRecentVisits(visits);
           })
-          .catch((err) => console.warn('[DashboardPage] visits load failed:', err));
+          .catch((err) => {
+            console.warn('[DashboardPage] visits load failed:', err);
+            if (!cancelled) setRecentError(true);
+          });
       } catch (err) {
         console.error('[DashboardPage] load failed:', err);
         if (!cancelled) {
@@ -251,6 +256,8 @@ export default function DashboardPage() {
                 </li>
               ))}
             </ul>
+          ) : USE_API && recentError ? (
+            <p className="dashboard-page__empty">Couldn’t load recent sessions. Refresh to retry.</p>
           ) : USE_API && recentVisits.length === 0 ? (
             <p className="dashboard-page__empty">No sessions yet.</p>
           ) : (

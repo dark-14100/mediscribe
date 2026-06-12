@@ -153,6 +153,8 @@ export default function SessionPage() {
   // Names of pipeline steps that failed but were skipped so the rest could
   // finish. Non-empty => the note is partial and we warn the doctor.
   const [degradedSteps, setDegradedSteps] = useState([]);
+  // Live-feed health: 'idle' | 'open' | 'reconnecting' | 'failed'
+  const [sseStatus, setSseStatus] = useState('idle');
 
   const [saveError, setSaveError] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -325,17 +327,67 @@ export default function SessionPage() {
       return () => conn.close();
     }
 
+    let attempts = 0;
+    const MAX_ATTEMPTS = 5;
+
+    // SSE gave up: pull the persisted pipeline result so the doctor still sees
+    // the note instead of a frozen screen.
+    async function recoverFromStatus() {
+      try {
+        const res = await apiFetch(`/pipeline/run-status/${visitId}`);
+        const p = await res.json();
+        const soapNorm = normalizeSoap({ soap_note: p.soap_note });
+        if (soapNorm) {
+          setSoap(soapNorm);
+          setVisibleFields(new Set(SOAP_FIELD_ORDER));
+        }
+        if (p.anomalies?.length) setAnomalies(p.anomalies);
+        if (p.differentials?.length) setDifferentials(p.differentials);
+        if (p.compliance_status) {
+          setCompliance({ status: p.compliance_status, notes: p.compliance_notes ?? [] });
+        }
+        if (p.bias_flags?.length) {
+          setBiasFlags(p.bias_flags.map((f, i) => ({ ...f, id: f.id ?? `bias-${i}` })));
+        }
+        if (Array.isArray(p.degraded_steps)) setDegradedSteps(p.degraded_steps);
+        if (p.trajectory) setTrajectory(p.trajectory);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
     const sse = connectSSE(visitId, sseHandlers.current);
     sseRef.current = sse;
-    sse.source.onerror = () => {
-      console.error('[SessionPage] SSE connection failed');
+
+    sse.source.onopen = () => {
+      attempts = 0;
+      setSseStatus('open');
+    };
+
+    sse.source.onerror = async () => {
+      // EventSource auto-reconnects while readyState is CONNECTING; surface that
+      // as a transient "reconnecting" state rather than a hard failure.
+      if (sse.source.readyState === EventSource.CONNECTING && attempts < MAX_ATTEMPTS) {
+        attempts += 1;
+        setSseStatus('reconnecting');
+        return;
+      }
+      // Out of retries (or the browser closed the stream): stop and recover.
+      console.error('[SessionPage] SSE connection failed after retries');
       sse.close();
       if (!import.meta.env.PROD) {
         const conn = simulateSessionSSE(sseHandlers.current, visitId);
         sseRef.current = conn;
-      } else {
-        setPipelineStatus('error');
+        setSseStatus('open');
+        return;
       }
+      setSseStatus('failed');
+      const recovered = await recoverFromStatus();
+      // Only escalate a still-running pipeline; never flip a done/signed note.
+      setPipelineStatus((prev) =>
+        prev === 'running' ? (recovered ? 'done' : 'error') : prev,
+      );
     };
 
     return () => {
@@ -614,6 +666,18 @@ export default function SessionPage() {
           {pipelineStatus === 'running' && (
             <p className="session-page__pipeline-status">
               Analysing session — results streaming in…
+            </p>
+          )}
+
+          {sseStatus === 'reconnecting' && (
+            <p className="session-page__reconnecting" role="status">
+              Reconnecting to live updates…
+            </p>
+          )}
+
+          {sseStatus === 'failed' && pipelineStatus !== 'error' && (
+            <p className="session-page__reconnecting" role="status">
+              Live updates disconnected — showing the latest saved results.
             </p>
           )}
 

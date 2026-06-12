@@ -4,6 +4,7 @@ import { useAuth } from '../../lib/authContext.js';
 import AddPatientModal from '../../components/AddPatientModal/AddPatientModal';
 import AppNav from '../../components/AppNav/AppNav';
 import PatientRegistry from '../../components/PatientRegistry/PatientRegistry';
+import { useToast } from '../../components/Toast/toastContext.js';
 import {
   createPatient,
   fetchPatients,
@@ -20,6 +21,7 @@ const USE_API = Boolean(import.meta.env.VITE_API_URL);
 export default function PatientsPage() {
   const navigate = useNavigate();
   const { signOut } = useAuth();
+  const toast = useToast();
   const [patients, setPatients] = useState(USE_API ? [] : REGISTRY_PATIENTS);
   const [filterSearch, setFilterSearch] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
@@ -67,8 +69,9 @@ export default function PatientsPage() {
         });
         setPatients((prev) => [mapApiPatientToRow(created), ...prev]);
         setModalOpen(false);
+        toast.success('Patient added');
       } catch {
-        setLoadError('Could not create patient. Try again.');
+        toast.error('Could not create patient. Try again.');
       }
       return;
     }
@@ -76,6 +79,7 @@ export default function PatientsPage() {
     const newPatient = buildPatientFromForm(form);
     setPatients((prev) => [newPatient, ...prev]);
     setModalOpen(false);
+    toast.success('Patient added');
   }
 
   return (

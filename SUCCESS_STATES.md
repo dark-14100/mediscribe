@@ -136,7 +136,7 @@ This screen has the richest state handling in the app.
 
 ## 5. The to-do list (only the gaps), by magnitude
 
-> **Update 2026-06-12:** Items **P0 #1**, **P1 #2**, and **P1 #3** are now **implemented** — the Session page surfaces a "Partial note" banner from `degraded_steps`, the Anomaly/Differential/Bias panels say "Couldn’t analyze — re-run to retry" when their step degraded, and a hard failure shows an "Analysis failed" banner + toast with a Retry action. P1 #4 and the P2 items remain.
+> **Update 2026-06-12:** **All listed gaps are now implemented.** P0 #1 (partial-note banner from `degraded_steps`), P1 #2 (panels distinguish failed vs empty), P1 #3 ("Analysis failed" banner + toast + Retry), P1 #4 (SSE "Reconnecting…" state with bounded retry and run-status recovery), P2 #5 ("Patient added" / create-error toasts), and P2 #6 (dashboard recent-sessions load-failure note).
 
 ### P0 — do before big features
 1. ✅ **Surface `degraded_steps` on the Session page.** When the `pipeline_done` event (or `/run` response) carries a non-empty `degraded_steps`, show a clear **warning banner**: "This note is partial — the following steps couldn't complete: …". This is the frontend half of work already done on the backend, and the "quick win" flagged in `BUILD_PLAN.md`.
@@ -144,11 +144,11 @@ This screen has the richest state handling in the app.
 ### P1 — important UX
 2. ✅ **Distinguish "failed agent" from "clean result"** in the side panels (Anomalies / Differentials / Bias). If a step is in `degraded_steps`, show "Couldn't analyze — try re-running" instead of "No anomalies detected."
 3. ✅ **Explicit pipeline-failure feedback.** On a hard `error`, show a toast/banner with a **Retry** action, not just a colored stepper.
-4. **SSE reconnect state.** Show "Reconnecting…" and attempt a reconnect instead of silently dropping to `error` in production.
+4. ✅ **SSE reconnect state.** Show "Reconnecting…" and attempt a reconnect instead of silently dropping to `error` in production.
 
 ### P2 — polish
-5. **"Patient added" success toast** on create (and a dedicated create-error message).
-6. **Dashboard recent-visits load failure** should show a small inline note instead of failing silently.
+5. ✅ **"Patient added" success toast** on create (and a dedicated create-error message).
+6. ✅ **Dashboard recent-visits load failure** should show a small inline note instead of failing silently.
 
 ---
 
