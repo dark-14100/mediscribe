@@ -116,6 +116,37 @@ class TrajectoryResult(BaseModel):
     computed_from_visits: int
 
 
+# --- Grounding (faithfulness of SOAP claims vs the transcript) ---
+
+GroundingStatus = Literal["grounded", "partial", "ungrounded"]
+
+
+class GroundingClaim(BaseModel):
+    """A single SOAP sentence checked against its cited transcript lines."""
+
+    field: SOAPFieldName
+    text: str
+    status: GroundingStatus
+    confidence: float = Field(ge=0.0, le=1.0)
+    cited_lines: list[int] = Field(default_factory=list)
+    issue: str | None = None
+
+
+class GroundingFieldResult(BaseModel):
+    field: SOAPFieldName
+    status: GroundingStatus
+    confidence: float = Field(ge=0.0, le=1.0)
+    cited_lines_valid: bool = True
+    unsupported_claims: list[GroundingClaim] = Field(default_factory=list)
+
+
+class GroundingResult(BaseModel):
+    status: GroundingStatus
+    confidence: float = Field(ge=0.0, le=1.0)
+    fields: list[GroundingFieldResult] = Field(default_factory=list)
+    checked_with: Literal["rules", "rules+llm"] = "rules"
+
+
 # --- Request / response shapes for /pipeline/* routes ---
 
 
@@ -152,6 +183,7 @@ class PipelinePayload(BaseModel):
     compliance_notes: list[ComplianceNote] = Field(default_factory=list)
     bias_flags: list[BiasFlag] = Field(default_factory=list)
     trajectory: TrajectoryResult | None = None
+    grounding: GroundingResult | None = None
     # Names of pipeline steps that failed at runtime and fell back to a default.
     # Empty means every step completed normally; non-empty signals the result is
     # partial/degraded so the UI can flag it to the doctor.

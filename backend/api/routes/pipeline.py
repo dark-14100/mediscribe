@@ -44,6 +44,7 @@ from core.constants import (
     EVENT_DIFFERENTIALS_READY,
     EVENT_DRIFT_READY,
     EVENT_ERROR,
+    EVENT_GROUNDING_READY,
     EVENT_PIPELINE_DONE,
     EVENT_SOAP_READY,
     EVENT_TRAJECTORY_READY,
@@ -54,6 +55,7 @@ from models.user import User
 from models.visit import Visit
 from schemas.pipeline import (
     AudioUrlResponse,
+    GroundingResult,
     PipelinePayload,
     PipelineRunRequest,
     SOAPNote,
@@ -389,6 +391,26 @@ async def _run_pipeline(
                 degraded_steps.append("soap_generator")
     await bus.publish(visit_id_str, EVENT_SOAP_READY, soap_note.model_dump(mode="json"))
 
+    # --- Step 2.5: Grounding gate ----------------------------------------
+    # Verify each SOAP claim is supported by its cited transcript lines. This is
+    # faithfulness (not correctness) and is config-gated; "off" skips it.
+    grounding_result: GroundingResult | None = None
+    if settings.GROUNDING_MODE.strip().lower() != "off":
+        grounding_fn = _resolve("services.grounding", "verify")
+        grounding_result = await _maybe_call(
+            grounding_fn,
+            soap_note,
+            payload.transcript,
+            default=None,
+            label="grounding",
+            degraded=degraded_steps,
+        )
+        await bus.publish(
+            visit_id_str,
+            EVENT_GROUNDING_READY,
+            {"grounding": _serialise(grounding_result)},
+        )
+
     # --- Step 3: History retrieval (RAG) ---------------------------------
     history_fn = _resolve("services.history_retrieval", "get_summaries")
     history_summaries: list[str] = await _maybe_call(
@@ -500,6 +522,11 @@ async def _run_pipeline(
 
     # --- Final: persist everything to the visit row ----------------------
     visit.soap_note = soap_note.model_dump(mode="json")
+    visit.soap_audit_trail = (
+        {"grounding": grounding_result.model_dump(mode="json")}
+        if grounding_result is not None
+        else {}
+    )
     visit.anomalies = _as_json_list(anomalies)
     visit.differentials = _as_json_list(differentials)
     serialized_drift = _serialise(drift_flag)
@@ -538,6 +565,7 @@ async def _run_pipeline(
         compliance_notes=compliance_notes or [],
         bias_flags=_serialise(bias_flags) or [],
         trajectory=_serialise(trajectory_result),
+        grounding=grounding_result,
         degraded_steps=degraded_steps,
     )
 
@@ -666,6 +694,12 @@ async def run_status(
                 computed_from_visits=0,
             )
             if visit.trajectory_direction
+            else None
+        ),
+        grounding=(
+            GroundingResult.model_validate(visit.soap_audit_trail["grounding"])
+            if isinstance(visit.soap_audit_trail, dict)
+            and visit.soap_audit_trail.get("grounding")
             else None
         ),
     )

@@ -59,6 +59,22 @@ class Settings(BaseSettings):
     DRIFT_THRESHOLD: float = 0.25
     COGNITIVE_LOAD_THRESHOLD: int = 6
 
+    # --- Grounding gate (faithfulness verification of SOAP claims) ---
+    # Checks each SOAP sentence is supported by its cited transcript lines.
+    #   off     = skip entirely
+    #   warn    = compute + surface to the doctor, never block (default)
+    #   enforce = require acknowledgement of flagged claims before sign-off
+    GROUNDING_MODE: str = "warn"
+    # Layer-2 LLM verifier is opt-in; the default ships rules-only (no Groq cost).
+    GROUNDING_USE_LLM: bool = False
+    GROUNDING_LLM_FIELDS: str = "assessment,plan"
+    GROUNDING_MODEL: str = "llama-3.3-70b-versatile"
+    # Lexical-overlap thresholds (fraction of a claim's content words found in its
+    # cited transcript lines): >= grounded => grounded; >= partial => partial;
+    # below partial => ungrounded.
+    GROUNDING_GROUNDED_THRESHOLD: float = 0.6
+    GROUNDING_PARTIAL_THRESHOLD: float = 0.3
+
     # --- Upload / payload limits (abuse + DoS guards) ---
     MAX_AUDIO_UPLOAD_BYTES: int = 25 * 1024 * 1024  # 25 MB
     MAX_TRANSCRIPT_LINES: int = 5000

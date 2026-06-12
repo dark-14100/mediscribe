@@ -75,6 +75,7 @@ HIPAA_DOCUMENTATION_CHECKLIST: Final[tuple[str, ...]] = (
 
 # --- SSE event names (pipeline route emits these in order) ---
 EVENT_SOAP_READY: Final[str] = "soap_ready"
+EVENT_GROUNDING_READY: Final[str] = "grounding_ready"
 EVENT_ANOMALIES_READY: Final[str] = "anomalies_ready"
 EVENT_DIFFERENTIALS_READY: Final[str] = "differentials_ready"
 EVENT_DRIFT_READY: Final[str] = "drift_ready"

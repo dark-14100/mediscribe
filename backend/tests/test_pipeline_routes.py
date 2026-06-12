@@ -310,6 +310,9 @@ async def test_run_assembles_full_payload(
     assert body["compliance_status"] == "pass"
     assert len(body["bias_flags"]) == 1
     assert body["trajectory"]["direction"] == "stable"
+    # Grounding gate runs in default "warn" mode and is included in the payload.
+    assert body["grounding"] is not None
+    assert body["grounding"]["status"] in {"grounded", "partial", "ungrounded"}
 
 
 @pytest.mark.asyncio
@@ -394,6 +397,8 @@ async def test_run_publishes_events_in_order(
     # SOAP first, anomalies/differentials/drift after Step 4, then compliance,
     # then bias + trajectory, then pipeline_done.
     assert received[0] == "soap_ready"
+    assert "grounding_ready" in received
+    assert received.index("grounding_ready") > received.index("soap_ready")
     assert "anomalies_ready" in received
     assert "differentials_ready" in received
     assert "drift_ready" in received
@@ -452,6 +457,8 @@ async def test_run_status_returns_persisted_payload(
     body = resp.json()
     assert body["visit_id"] == vid
     assert body["soap_note"]["subjective"]["text"] == "Headache."
+    # Grounding verdict persisted to soap_audit_trail and rehydrated here.
+    assert body["grounding"] is not None
 
 
 @pytest.mark.asyncio

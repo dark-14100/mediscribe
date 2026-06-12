@@ -2,6 +2,7 @@ import { BASE_URL } from './api.js';
 
 const SSE_EVENTS = [
   'soap_ready',
+  'grounding_ready',
   'anomalies_ready',
   'differentials_ready',
   'drift_ready',

@@ -140,6 +140,7 @@ export default function SessionPage() {
   const [visibleFields, setVisibleFields] = useState(() => new Set());
   const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
 
+  const [grounding, setGrounding] = useState(null);
   const [anomalies, setAnomalies] = useState([]);
   const [differentials, setDifferentials] = useState([]);
   const [compliance, setCompliance] = useState(null);
@@ -168,6 +169,10 @@ export default function SessionPage() {
       const data = parseSSEData(event);
       const normalized = normalizeSoap(data);
       if (normalized) staggerSoapFields(setVisibleFields, setSoap, normalized);
+    },
+    grounding_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.grounding) setGrounding(data.grounding);
     },
     anomalies_ready(event) {
       const data = parseSSEData(event);
@@ -257,6 +262,8 @@ export default function SessionPage() {
 
         const existingTranscript = parseRawTranscript(visit.raw_transcript);
         if (existingTranscript.length) setTranscript(existingTranscript);
+
+        if (visit.soap_audit_trail?.grounding) setGrounding(visit.soap_audit_trail.grounding);
 
         if (visit.anomalies?.length) setAnomalies(visit.anomalies);
         if (visit.differentials?.length) setDifferentials(visit.differentials);
@@ -351,6 +358,7 @@ export default function SessionPage() {
         }
         if (Array.isArray(p.degraded_steps)) setDegradedSteps(p.degraded_steps);
         if (p.trajectory) setTrajectory(p.trajectory);
+        if (p.grounding) setGrounding(p.grounding);
         return true;
       } catch {
         return false;
@@ -403,6 +411,7 @@ export default function SessionPage() {
       if (!useRealApi || !lines?.length) return;
       // Fresh run: clear any prior partial/failed state.
       setDegradedSteps([]);
+      setGrounding(null);
       setPipelineStatus('running');
       try {
         const res = await apiFetch('/pipeline/run', {
@@ -728,6 +737,7 @@ export default function SessionPage() {
             modifiedFields={doctorModifiedFields}
             onChange={isSigned ? undefined : handleSoapChange}
             errored={pipelineStatus === 'error'}
+            grounding={grounding}
           />
 
           <ComplianceBadge compliance={compliance} />
