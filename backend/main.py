@@ -11,6 +11,8 @@ from fastapi import FastAPI, Request
 from fastapi.exceptions import ResponseValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 
 from api.routes import analytics as analytics_routes
 from api.routes import auth as auth_routes
@@ -19,6 +21,7 @@ from api.routes import patients as patients_routes
 from api.routes import pipeline as pipeline_routes
 from api.routes import visits as visits_routes
 from core.config import settings
+from core.ratelimit import limiter
 
 logging.basicConfig(
     level=logging.INFO,
@@ -62,6 +65,11 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
         **docs_kwargs,
     )
+
+    # Rate limiting: slowapi reads the limiter off app.state and converts a
+    # breach into a 429 via its handler.
+    app.state.limiter = limiter
+    app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
     app.add_middleware(
         CORSMiddleware,

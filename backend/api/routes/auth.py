@@ -2,12 +2,14 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user
+from core.config import settings
 from core.constants import DOCTOR_ROLE
+from core.ratelimit import limiter
 from core.security import create_access_token, hash_password, verify_password
 from db.session import get_db
 from models.user import User
@@ -22,7 +24,9 @@ router = APIRouter(prefix="/auth", tags=["auth"])
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
 )
+@limiter.limit(settings.RATE_LIMIT_AUTH)
 async def register(
+    request: Request,
     payload: UserCreate,
     db: AsyncSession = Depends(get_db),
 ) -> User:
@@ -55,7 +59,9 @@ async def register(
 
 
 @router.post("/login", response_model=Token)
+@limiter.limit(settings.RATE_LIMIT_AUTH)
 async def login(
+    request: Request,
     payload: UserLogin,
     db: AsyncSession = Depends(get_db),
 ) -> Token:

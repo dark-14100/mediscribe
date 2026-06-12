@@ -16,6 +16,7 @@ sys.path.insert(0, str(BACKEND_ROOT))
 
 # Force-set test env BEFORE any app module reads settings — overrides whatever
 # leaked in from the shell or a developer's local .env file.
+os.environ["ENVIRONMENT"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["REDIS_URL"] = "redis://localhost:6379/0"
 os.environ["JWT_SECRET_KEY"] = "test-secret-key-not-for-production-do-not-use"

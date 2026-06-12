@@ -14,8 +14,6 @@ The AI services are looked up dynamically at call time. If the service file
 is empty (Phase-3-style scaffolding) the route returns HTTP 503 with a clear
 message rather than 500-ing on a missing attribute.
 """
-from __future__ import annotations
-
 import asyncio
 import base64
 import importlib
@@ -31,6 +29,7 @@ from fastapi import (
     HTTPException,
     Path,
     Query,
+    Request,
     UploadFile,
     status,
 )
@@ -62,6 +61,7 @@ from schemas.pipeline import (
     TranscribeResponse,
 )
 from core.config import settings
+from core.ratelimit import limiter
 from services.event_bus import EventBus, get_event_bus
 
 log = logging.getLogger("medscribe.pipeline")
@@ -209,7 +209,9 @@ def _as_str_list(value: Any) -> list[str]:
 
 
 @router.post("/transcribe", response_model=TranscribeResponse)
+@limiter.limit(settings.RATE_LIMIT_PIPELINE)
 async def transcribe(
+    request: Request,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     audio: UploadFile = File(...),
@@ -536,7 +538,9 @@ async def _run_pipeline(
 
 
 @router.post("/run", response_model=PipelinePayload)
+@limiter.limit(settings.RATE_LIMIT_PIPELINE)
 async def run(
+    request: Request,
     payload: PipelineRunRequest,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],

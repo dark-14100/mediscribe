@@ -59,6 +59,13 @@ class Settings(BaseSettings):
     MAX_TRANSCRIPT_LINES: int = 5000
     MAX_TRANSCRIPT_LINE_CHARS: int = 10_000
 
+    # --- Rate limiting (brute-force + cost/DoS abuse guards) ---
+    # slowapi-style limit strings ("<count>/<period>"). Auth endpoints are kept
+    # tight to slow credential stuffing; the LLM-backed pipeline endpoints guard
+    # Groq cost abuse. Tune via env without code changes.
+    RATE_LIMIT_AUTH: str = "5/minute"
+    RATE_LIMIT_PIPELINE: str = "10/minute"
+
     # --- HTTP / CORS ---
     CORS_ORIGINS: str = "http://localhost:3000"
 
