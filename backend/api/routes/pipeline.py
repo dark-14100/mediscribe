@@ -55,6 +55,7 @@ from models.user import User
 from models.visit import Visit
 from schemas.pipeline import (
     AudioUrlResponse,
+    DeidReport,
     GroundingResult,
     PipelinePayload,
     PipelineRunRequest,
@@ -62,6 +63,7 @@ from schemas.pipeline import (
     TrajectoryResult,
     TranscribeResponse,
 )
+from services.deid import count_residual, reidentify
 from core.audit import log_phi_access
 from core.config import settings
 from core.ratelimit import limiter
@@ -360,36 +362,75 @@ async def _run_pipeline(
     # client so the doctor knows the note is partial rather than complete.
     degraded_steps: list[str] = []
 
+    # --- Step 1.5: De-identify before any LLM sees the text --------------
+    # Replace PHI with reversible placeholders; the whole LLM portion runs on
+    # the clean copy, and every output is re-identified at the boundaries.
+    deid_mode = settings.DEID_MODE.strip().lower()
+    deid: Any = None
+    if deid_mode != "off":
+        deid_fn = _resolve("services.deid", "deidentify_transcript")
+        deid = await _maybe_call(
+            deid_fn,
+            payload.transcript,
+            patient,
+            default=None,
+            label="deid",
+            degraded=degraded_steps,
+        )
+    deid_map: dict[str, str] = deid.mapping if deid is not None else {}
+    # enforce = fail-closed: if de-id failed, never hand raw PHI to ANY LLM step
+    # (SOAP or the agents). We run the rest on empty text rather than crash.
+    soap_blocked = deid_mode == "enforce" and deid is None
+    if deid is not None:
+        clean_transcript = deid.transcript
+    elif soap_blocked:
+        clean_transcript = []
+    else:
+        clean_transcript = payload.transcript
+
+    def _reid(value: Any) -> Any:
+        """Serialize a result then restore real identifiers for display/persist."""
+        return reidentify(_serialise(value), deid_map)
+
     # --- Step 2: SOAP generation -----------------------------------------
     # NB: the AI team's services/soap_generator.py exposes `generate_soap`,
     # not `generate`. We fall back to either symbol so the route works with
     # whichever name they decide to standardise on.
-    soap_fn = _require(
-        _resolve("services.soap_generator", "generate_soap")
-        or _resolve("services.soap_generator", "generate"),
-        "SOAP generator",
-    )
-    # SOAP is the one "required" step, but a Groq outage shouldn't block the
-    # doctor entirely: degrade to an empty SOAP skeleton they can fill in
-    # manually instead of failing the whole run.
-    soap_raw: Any = await _maybe_call(
-        soap_fn,
-        payload.transcript,
-        default=SOAPNote(),
-        label="soap_generator",
-        degraded=degraded_steps,
-    )
-    if isinstance(soap_raw, SOAPNote):
-        soap_note = soap_raw
-    else:  # tolerate dict returns; degrade on anything unparseable
-        try:
-            soap_note = SOAPNote.model_validate(soap_raw)
-        except Exception:  # noqa: BLE001
-            log.exception("[pipeline] soap_generator returned unparseable output")
-            soap_note = SOAPNote()
-            if "soap_generator" not in degraded_steps:
-                degraded_steps.append("soap_generator")
-    await bus.publish(visit_id_str, EVENT_SOAP_READY, soap_note.model_dump(mode="json"))
+    if soap_blocked:
+        log.warning(
+            "[pipeline] DEID enforce: de-id failed — skipping SOAP to avoid "
+            "sending raw PHI to the LLM"
+        )
+        soap_note = SOAPNote()
+        if "soap_generator" not in degraded_steps:
+            degraded_steps.append("soap_generator")
+    else:
+        soap_fn = _require(
+            _resolve("services.soap_generator", "generate_soap")
+            or _resolve("services.soap_generator", "generate"),
+            "SOAP generator",
+        )
+        # SOAP is the one "required" step, but a Groq outage shouldn't block the
+        # doctor entirely: degrade to an empty SOAP skeleton they can fill in
+        # manually instead of failing the whole run.
+        soap_raw: Any = await _maybe_call(
+            soap_fn,
+            clean_transcript,
+            default=SOAPNote(),
+            label="soap_generator",
+            degraded=degraded_steps,
+        )
+        if isinstance(soap_raw, SOAPNote):
+            soap_note = soap_raw
+        else:  # tolerate dict returns; degrade on anything unparseable
+            try:
+                soap_note = SOAPNote.model_validate(soap_raw)
+            except Exception:  # noqa: BLE001
+                log.exception("[pipeline] soap_generator returned unparseable output")
+                soap_note = SOAPNote()
+                if "soap_generator" not in degraded_steps:
+                    degraded_steps.append("soap_generator")
+    await bus.publish(visit_id_str, EVENT_SOAP_READY, _reid(soap_note))
 
     # --- Step 2.5: Grounding gate ----------------------------------------
     # Verify each SOAP claim is supported by its cited transcript lines. This is
@@ -400,7 +441,7 @@ async def _run_pipeline(
         grounding_result = await _maybe_call(
             grounding_fn,
             soap_note,
-            payload.transcript,
+            clean_transcript,
             default=None,
             label="grounding",
             degraded=degraded_steps,
@@ -408,20 +449,28 @@ async def _run_pipeline(
         await bus.publish(
             visit_id_str,
             EVENT_GROUNDING_READY,
-            {"grounding": _serialise(grounding_result)},
+            {"grounding": _reid(grounding_result)},
         )
 
     # --- Step 3: History retrieval (RAG) ---------------------------------
     history_fn = _resolve("services.history_retrieval", "get_summaries")
-    history_summaries: list[str] = await _maybe_call(
-        history_fn,
-        soap_note,
-        patient.id,
-        db,
-        default=[],
-        label="history_retrieval",
-        degraded=degraded_steps,
-    )
+    if soap_blocked:
+        # enforce fail-closed: don't pull real history into the LLM agents.
+        history_summaries: list[str] = []
+    else:
+        history_summaries = await _maybe_call(
+            history_fn,
+            soap_note,
+            patient.id,
+            db,
+            default=[],
+            label="history_retrieval",
+            degraded=degraded_steps,
+        )
+        # Past-visit summaries are PHI too — scrub them (extending the same map)
+        # before they're fed to the analyst agents.
+        if deid is not None and history_summaries:
+            history_summaries = [deid.scrub_text(s) for s in history_summaries]
 
     # --- Step 4: Parallel intelligence agents ----------------------------
     anomaly_fn = _resolve("services.anomaly_agent", "detect")
@@ -448,20 +497,20 @@ async def _run_pipeline(
         _maybe_call(
             drift_fn,
             patient.id,
-            payload.transcript,
+            clean_transcript,
             default=None,
             label="drift_agent",
             degraded=degraded_steps,
         ),
     )
-    await bus.publish(visit_id_str, EVENT_ANOMALIES_READY, {"anomalies": _serialise(anomalies)})
+    await bus.publish(visit_id_str, EVENT_ANOMALIES_READY, {"anomalies": _reid(anomalies)})
     await bus.publish(
         visit_id_str,
         EVENT_DIFFERENTIALS_READY,
-        {"differentials": _serialise(differentials)},
+        {"differentials": _reid(differentials)},
     )
     await bus.publish(
-        visit_id_str, EVENT_DRIFT_READY, {"drift_flag": _serialise(drift_flag)}
+        visit_id_str, EVENT_DRIFT_READY, {"drift_flag": _reid(drift_flag)}
     )
 
     # --- Step 5: Compliance (sequential, after Step 4) -------------------
@@ -486,7 +535,10 @@ async def _run_pipeline(
     await bus.publish(
         visit_id_str,
         EVENT_COMPLIANCE_READY,
-        {"compliance_status": compliance_status, "compliance_notes": compliance_notes},
+        {
+            "compliance_status": compliance_status,
+            "compliance_notes": _reid(compliance_notes),
+        },
     )
 
     # --- Steps 6 + 7: Bias review + Trajectory (concurrent) --------------
@@ -512,36 +564,56 @@ async def _run_pipeline(
         ),
     )
     await bus.publish(
-        visit_id_str, EVENT_BIAS_READY, {"bias_flags": _serialise(bias_flags)}
+        visit_id_str, EVENT_BIAS_READY, {"bias_flags": _reid(bias_flags)}
     )
     await bus.publish(
         visit_id_str,
         EVENT_TRAJECTORY_READY,
-        {"trajectory": _serialise(trajectory_result)},
+        {"trajectory": _reid(trajectory_result)},
     )
 
+    # --- Re-identify outputs for the doctor's view + persistence ---------
+    # Everything above ran on de-identified text; restore real identifiers now.
+    soap_note_pub = _reid(soap_note)
+    grounding_pub = _reid(grounding_result) if grounding_result is not None else None
+
+    deid_report: DeidReport | None = None
+    if deid is not None:
+        deid_report = deid.report()
+        if settings.DEID_FLAG_RESIDUAL:
+            residual = count_residual(soap_note_pub, deid_map)
+            deid_report.residual_placeholders = residual
+            if residual and deid_mode == "enforce" and "deid" not in degraded_steps:
+                degraded_steps.append("deid")
+    elif deid_mode != "off":
+        # de-id was attempted but failed (fail-open) — record it didn't apply.
+        deid_report = DeidReport(applied=False)
+
     # --- Final: persist everything to the visit row ----------------------
-    visit.soap_note = soap_note.model_dump(mode="json")
-    visit.soap_audit_trail = (
-        {"grounding": grounding_result.model_dump(mode="json")}
-        if grounding_result is not None
-        else {}
-    )
-    visit.anomalies = _as_json_list(anomalies)
-    visit.differentials = _as_json_list(differentials)
-    serialized_drift = _serialise(drift_flag)
+    visit.soap_note = soap_note_pub
+    audit_trail: dict[str, Any] = {}
+    if grounding_pub is not None:
+        audit_trail["grounding"] = grounding_pub
+    if deid_report is not None:
+        audit_trail["deid"] = deid_report.model_dump(mode="json")
+    visit.soap_audit_trail = audit_trail
+    visit.anomalies = _as_json_list(_reid(anomalies))
+    visit.differentials = _as_json_list(_reid(differentials))
+    serialized_drift = _reid(drift_flag)
     visit.drift_flag = (
         serialized_drift if isinstance(serialized_drift, dict) else None
     )
     visit.compliance_status = compliance_status
-    visit.compliance_notes = _as_json_list(compliance_notes)
-    visit.bias_flags = _as_json_list(bias_flags)
+    visit.compliance_notes = _as_json_list(_reid(compliance_notes))
+    visit.bias_flags = _as_json_list(_reid(bias_flags))
     if trajectory_result is not None:
         visit.trajectory_score = getattr(trajectory_result, "score", None)
         visit.trajectory_direction = getattr(trajectory_result, "direction", None)
         visit.trajectory_watch_zones = _as_str_list(
-            getattr(trajectory_result, "watch_zones", []) or []
+            _reid(getattr(trajectory_result, "watch_zones", []) or [])
         )
+    # The stored transcript is always the REAL one — it never goes to an LLM in
+    # persisted form; only the de-identified copy did.
     visit.raw_transcript = "\n".join(
         f"[{t.speaker}] {t.text}" for t in payload.transcript
     )
@@ -557,15 +629,20 @@ async def _run_pipeline(
 
     return PipelinePayload(
         visit_id=visit.id,
-        soap_note=soap_note,
-        anomalies=_serialise(anomalies) or [],
-        differentials=_serialise(differentials) or [],
-        drift_flag=_serialise(drift_flag),
+        soap_note=SOAPNote.model_validate(soap_note_pub),
+        anomalies=_reid(anomalies) or [],
+        differentials=_reid(differentials) or [],
+        drift_flag=_reid(drift_flag),
         compliance_status=compliance_status,
-        compliance_notes=compliance_notes or [],
-        bias_flags=_serialise(bias_flags) or [],
-        trajectory=_serialise(trajectory_result),
-        grounding=grounding_result,
+        compliance_notes=_reid(compliance_notes) or [],
+        bias_flags=_reid(bias_flags) or [],
+        trajectory=_reid(trajectory_result),
+        grounding=(
+            GroundingResult.model_validate(grounding_pub)
+            if grounding_pub is not None
+            else None
+        ),
+        deid=deid_report,
         degraded_steps=degraded_steps,
     )
 
@@ -700,6 +777,12 @@ async def run_status(
             GroundingResult.model_validate(visit.soap_audit_trail["grounding"])
             if isinstance(visit.soap_audit_trail, dict)
             and visit.soap_audit_trail.get("grounding")
+            else None
+        ),
+        deid=(
+            DeidReport.model_validate(visit.soap_audit_trail["deid"])
+            if isinstance(visit.soap_audit_trail, dict)
+            and visit.soap_audit_trail.get("deid")
             else None
         ),
     )

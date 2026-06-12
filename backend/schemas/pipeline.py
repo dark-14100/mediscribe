@@ -116,6 +116,24 @@ class TrajectoryResult(BaseModel):
     computed_from_visits: int
 
 
+# --- De-identification (PHI stripped from text before the LLM) ---
+
+DeidCategory = Literal[
+    "name", "dob", "date", "phone", "email", "id", "url", "address", "other"
+]
+
+
+class DeidReport(BaseModel):
+    """PHI-free summary of a de-identification pass. The reversible map of
+    placeholder->original is PHI and is NEVER stored here — only counts."""
+
+    applied: bool = False
+    method: Literal["rules", "rules+ner"] = "rules"
+    entity_count: int = 0
+    by_category: dict[str, int] = Field(default_factory=dict)
+    residual_placeholders: int = 0
+
+
 # --- Grounding (faithfulness of SOAP claims vs the transcript) ---
 
 GroundingStatus = Literal["grounded", "partial", "ungrounded"]
@@ -184,6 +202,7 @@ class PipelinePayload(BaseModel):
     bias_flags: list[BiasFlag] = Field(default_factory=list)
     trajectory: TrajectoryResult | None = None
     grounding: GroundingResult | None = None
+    deid: DeidReport | None = None
     # Names of pipeline steps that failed at runtime and fell back to a default.
     # Empty means every step completed normally; non-empty signals the result is
     # partial/degraded so the UI can flag it to the doctor.

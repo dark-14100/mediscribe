@@ -313,6 +313,77 @@ async def test_run_assembles_full_payload(
     # Grounding gate runs in default "warn" mode and is included in the payload.
     assert body["grounding"] is not None
     assert body["grounding"]["status"] in {"grounded", "partial", "ungrounded"}
+    # De-identification runs in default "on" mode; a PHI-free report is included.
+    assert body["deid"] is not None
+    assert body["deid"]["applied"] is True
+
+
+@pytest.mark.asyncio
+async def test_deid_strips_phi_before_llm_and_restores_in_output(
+    client, doctor_user, ai_services_installed, monkeypatch
+):
+    """The SOAP generator must never see the patient's name; the persisted note
+    must show it again (de-id before LLM, re-id after)."""
+    import services.soap_generator as soap_mod
+
+    captured: dict[str, str] = {}
+
+    async def capture_generate(transcript):
+        joined = " ".join(getattr(t, "text", "") for t in transcript)
+        captured["transcript"] = joined
+        # Echo whatever (de-identified) name token we received back into the note
+        # so we can assert it gets re-identified on the way out.
+        return SOAPNote(
+            subjective=SOAPField(text=joined, source_lines=[1]),
+            objective=SOAPField(text="", source_lines=[]),
+            assessment=SOAPField(text="", source_lines=[]),
+            plan=SOAPField(text="", source_lines=[]),
+        )
+
+    monkeypatch.setattr(soap_mod, "generate", capture_generate, raising=False)
+    monkeypatch.setattr(soap_mod, "generate_soap", None, raising=False)
+
+    pr = await client.post(
+        "/patients",
+        json={
+            "full_name": "Zelda Fitzgerald",
+            "dob": "1985-07-14",
+            "gender": "female",
+            "allergies": [],
+            "active_medications": [],
+        },
+        headers=auth_header(doctor_user),
+    )
+    pid = pr.json()["id"]
+    vr = await client.post(
+        "/visits", json={"patient_id": pid}, headers=auth_header(doctor_user)
+    )
+    vid = vr.json()["id"]
+
+    transcript = [
+        {"speaker": "doctor", "text": "Hello Zelda, what brings you in?", "line_index": 1},
+        {"speaker": "patient", "text": "Zelda Fitzgerald here, my head hurts.", "line_index": 2},
+    ]
+    resp = await client.post(
+        "/pipeline/run",
+        json={"visit_id": vid, "transcript": transcript},
+        headers=auth_header(doctor_user),
+    )
+    assert resp.status_code == 200, resp.text
+
+    # The LLM never saw the real name.
+    assert "Zelda" not in captured["transcript"]
+    assert "Fitzgerald" not in captured["transcript"]
+    assert "[PATIENT]" in captured["transcript"]
+
+    # The doctor-facing output has it restored.
+    body = resp.json()
+    assert "Zelda Fitzgerald" in body["soap_note"]["subjective"]["text"]
+    assert body["deid"]["entity_count"] >= 1
+
+    # And the persisted note is the real (re-identified) one.
+    fetched = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    assert "Zelda Fitzgerald" in fetched.json()["soap_note"]["subjective"]["text"]
 
 
 @pytest.mark.asyncio

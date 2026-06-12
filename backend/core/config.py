@@ -59,6 +59,22 @@ class Settings(BaseSettings):
     DRIFT_THRESHOLD: float = 0.25
     COGNITIVE_LOAD_THRESHOLD: int = 6
 
+    # --- De-identification (strip PHI from text before the LLM) ---
+    # Replaces patient identifiers with reversible placeholders before any LLM
+    # call, then re-identifies outputs for the doctor's view.
+    #   off     = skip entirely (send raw)
+    #   on      = de-identify, fail-open if it errors (default)
+    #   enforce = de-identify, fail-closed (skip the LLM step rather than send raw)
+    DEID_MODE: str = "on"
+    # Layer-2 NER (Presidio/spaCy) is opt-in; the default ships rules-only.
+    DEID_USE_NER: bool = False
+    DEID_NER_MODEL: str = "en_core_web_lg"
+    # Dates are HIPAA identifiers, but relative phrases ("3 days ago") aid
+    # clinical reasoning and are never matched; this toggles absolute dates only.
+    DEID_REDACT_DATES: bool = True
+    # Record any placeholder that survives re-identification (should be 0).
+    DEID_FLAG_RESIDUAL: bool = True
+
     # --- Grounding gate (faithfulness verification of SOAP claims) ---
     # Checks each SOAP sentence is supported by its cited transcript lines.
     #   off     = skip entirely
