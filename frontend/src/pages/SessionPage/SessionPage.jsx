@@ -46,6 +46,25 @@ const EMPTY_SOAP = {
   plan: '',
 };
 
+// Human-readable names for the backend's `degraded_steps` labels, so the
+// "partial note" banner reads in clinician language rather than code symbols.
+const DEGRADED_LABELS = {
+  soap_generator: 'SOAP note',
+  history_retrieval: 'Patient history',
+  anomaly_agent: 'Anomaly detection',
+  differential_agent: 'Differential diagnoses',
+  drift_agent: 'Symptom drift',
+  compliance: 'Compliance check',
+  bias_review: 'Bias review',
+  trajectory: 'Trajectory',
+};
+
+const AGENT_FAILED_LABEL = 'Couldn’t analyze — re-run to retry.';
+
+function degradedLabel(step) {
+  return DEGRADED_LABELS[step] ?? step.replace(/_/g, ' ');
+}
+
 // ── helpers ────────────────────────────────────────────────────────────────
 
 function normalizeSoap(payload) {
@@ -131,6 +150,9 @@ export default function SessionPage() {
 
   const [pipelineStatus, setPipelineStatus] = useState('idle');
   // 'idle' | 'running' | 'done' | 'saving' | 'signing' | 'signed' | 'error'
+  // Names of pipeline steps that failed but were skipped so the rest could
+  // finish. Non-empty => the note is partial and we warn the doctor.
+  const [degradedSteps, setDegradedSteps] = useState([]);
 
   const [saveError, setSaveError] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
@@ -184,7 +206,11 @@ export default function SessionPage() {
       }
       if (data?.direction) setTrajectory(data);
     },
-    pipeline_done() {
+    pipeline_done(event) {
+      const data = parseSSEData(event);
+      if (Array.isArray(data?.degraded_steps)) {
+        setDegradedSteps(data.degraded_steps);
+      }
       setPipelineStatus('done');
     },
     error(event) {
@@ -320,6 +346,38 @@ export default function SessionPage() {
 
   // ── transcript ready → run pipeline ─────────────────────────────────────
 
+  const runPipeline = useCallback(
+    async (lines) => {
+      if (!useRealApi || !lines?.length) return;
+      // Fresh run: clear any prior partial/failed state.
+      setDegradedSteps([]);
+      setPipelineStatus('running');
+      try {
+        const res = await apiFetch('/pipeline/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ visit_id: visitId, transcript: lines }),
+        });
+        // SSE events drive the live UI; pipeline_done flips status to 'done' and
+        // carries degraded_steps. We also read the response as a fallback in case
+        // the SSE stream dropped before delivering the final event.
+        try {
+          const payload = await res.json();
+          if (Array.isArray(payload?.degraded_steps)) {
+            setDegradedSteps(payload.degraded_steps);
+          }
+        } catch {
+          // SSE already carried the data; ignore.
+        }
+      } catch (err) {
+        console.error('[SessionPage] pipeline/run failed:', err);
+        setPipelineStatus('error');
+        toast.error('Analysis failed. You can retry.');
+      }
+    },
+    [visitId, useRealApi, toast],
+  );
+
   const handleTranscriptReady = useCallback(
     async (transcript) => {
       if (!useRealApi) return; // mock already simulated
@@ -332,21 +390,15 @@ export default function SessionPage() {
       }
 
       setTranscript(transcript);
-      setPipelineStatus('running');
-      try {
-        await apiFetch('/pipeline/run', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ visit_id: visitId, transcript }),
-        });
-        // SSE events drive the UI; pipeline_done event will flip status to 'done'
-      } catch (err) {
-        console.error('[SessionPage] pipeline/run failed:', err);
-        setPipelineStatus('error');
-      }
+      await runPipeline(transcript);
     },
-    [visitId, useRealApi],
+    [useRealApi, runPipeline],
   );
+
+  const handleRetryPipeline = useCallback(() => {
+    if (!transcript.length) return;
+    runPipeline(transcript);
+  }, [transcript, runPipeline]);
 
   // ── SOAP edits ───────────────────────────────────────────────────────────
 
@@ -473,6 +525,9 @@ export default function SessionPage() {
   const isSigned = pipelineStatus === 'signed';
   const isSaving = pipelineStatus === 'saving' || pipelineStatus === 'signing';
   const recorderDisabled = pipelineStatus === 'running' || isSaving || isSigned;
+  const isDegraded = (step) => degradedSteps.includes(step);
+  const hasDegraded = pipelineStatus !== 'error' && degradedSteps.length > 0;
+  const canRetry = transcript.length > 0 && pipelineStatus !== 'running' && !isSaving;
 
   const pipelineSteps = useMemo(() => {
     const soapHasContent = SOAP_FIELD_ORDER.some((f) => (soap[f] || '').trim().length > 0);
@@ -562,6 +617,45 @@ export default function SessionPage() {
             </p>
           )}
 
+          {pipelineStatus === 'error' && (
+            <div className="session-page__pipeline-error" role="alert">
+              <div>
+                <p className="session-page__banner-title">Analysis failed</p>
+                <p className="session-page__banner-sub">
+                  Something went wrong while analysing this session. Your transcript is safe.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="session-page__retry"
+                onClick={handleRetryPipeline}
+                disabled={!canRetry}
+              >
+                Retry analysis
+              </button>
+            </div>
+          )}
+
+          {hasDegraded && (
+            <div className="session-page__degraded" role="alert">
+              <div>
+                <p className="session-page__banner-title">Partial note</p>
+                <p className="session-page__banner-sub">
+                  These steps couldn’t complete: {degradedSteps.map(degradedLabel).join(', ')}. The
+                  rest of the note is complete — re-run to retry the missing steps.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="session-page__retry"
+                onClick={handleRetryPipeline}
+                disabled={!canRetry}
+              >
+                Re-run analysis
+              </button>
+            </div>
+          )}
+
           <TranscriptPanel lines={transcript} />
 
           <SOAPNote
@@ -642,7 +736,11 @@ export default function SessionPage() {
             count={anomalies.length}
             tone={anomalies.some((a) => a.severity === 'high') ? 'danger' : 'alert'}
             emptyLabel={
-              pipelineStatus === 'running' ? 'Analysing…' : 'No anomalies detected.'
+              isDegraded('anomaly_agent')
+                ? AGENT_FAILED_LABEL
+                : pipelineStatus === 'running'
+                  ? 'Analysing…'
+                  : 'No anomalies detected.'
             }
           >
             <div className="session-page__anomalies">
@@ -652,13 +750,17 @@ export default function SessionPage() {
             </div>
           </SidePanel>
 
-          <DifferentialPanel differentials={differentials} />
+          <DifferentialPanel
+            differentials={differentials}
+            degraded={isDegraded('differential_agent')}
+          />
 
           <BiasReviewPanel
             flags={biasFlags}
             dismissed={dismissedBias}
             onAccept={handleAcceptBias}
             onDismiss={handleDismissBias}
+            degraded={isDegraded('bias_review')}
           />
         </aside>
       </div>

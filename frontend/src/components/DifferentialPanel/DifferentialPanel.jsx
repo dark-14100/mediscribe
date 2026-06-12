@@ -1,8 +1,17 @@
 import SidePanel from '../SidePanel/SidePanel';
 import './DifferentialPanel.css';
 
-export default function DifferentialPanel({ differentials }) {
+export default function DifferentialPanel({ differentials, degraded = false }) {
   if (!differentials?.length) {
+    // Distinguish "the agent failed" from "nothing to show" — a silent null
+    // would otherwise hide a degraded step from the doctor.
+    if (degraded) {
+      return (
+        <SidePanel title="Differential diagnoses">
+          <p className="differential-panel__disclaimer">Couldn’t analyze — re-run to retry.</p>
+        </SidePanel>
+      );
+    }
     return null;
   }
 

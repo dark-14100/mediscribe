@@ -1,14 +1,16 @@
 import SidePanel from '../SidePanel/SidePanel';
 import './BiasReviewPanel.css';
 
-export default function BiasReviewPanel({ flags, dismissed, onAccept, onDismiss }) {
+export default function BiasReviewPanel({ flags, dismissed, onAccept, onDismiss, degraded = false }) {
   const visible = flags?.filter((f) => !dismissed.has(f.id)) ?? [];
 
-  // Before the pipeline returns, show a waiting hint rather than "0".
+  // Before the pipeline returns, show a waiting hint rather than "0". If the
+  // bias step degraded, say so instead of implying it's still pending.
   if (!flags?.length) {
+    const message = degraded ? 'Couldn’t analyze — re-run to retry.' : 'Waiting for pipeline…';
     return (
-      <SidePanel title="Bias review" emptyLabel="Waiting for pipeline…">
-        <p className="bias-review-panel__empty">Waiting for pipeline…</p>
+      <SidePanel title="Bias review" emptyLabel={message}>
+        <p className="bias-review-panel__empty">{message}</p>
       </SidePanel>
     );
   }

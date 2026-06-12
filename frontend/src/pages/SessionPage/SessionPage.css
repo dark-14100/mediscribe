@@ -134,6 +134,59 @@
   padding: 0.5rem 0.75rem;
 }
 
+.session-page__degraded,
+.session-page__pipeline-error {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius-md);
+}
+
+.session-page__pipeline-error {
+  background: rgba(239, 68, 68, 0.08);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.session-page__degraded {
+  background: rgba(245, 158, 11, 0.1);
+  border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.session-page__banner-title {
+  font-size: 0.9375rem;
+  font-weight: 700;
+  color: var(--color-text);
+}
+
+.session-page__banner-sub {
+  font-size: 0.8125rem;
+  color: var(--color-text-muted);
+}
+
+.session-page__retry {
+  flex-shrink: 0;
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: var(--color-text);
+  cursor: pointer;
+}
+
+.session-page__retry:hover:not(:disabled) {
+  background: var(--color-bg);
+}
+
+.session-page__retry:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .session-page__signed-badge {
   display: inline-flex;
   align-items: center;
