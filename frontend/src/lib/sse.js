@@ -1,4 +1,3 @@
-import { getToken } from './auth.js';
 import { BASE_URL } from './api.js';
 
 const SSE_EVENTS = [
@@ -16,14 +15,14 @@ const SSE_EVENTS = [
 /**
  * Open a real SSE connection to /pipeline/stream/{visitId}.
  *
- * EventSource cannot set custom headers, so the JWT is passed as ?token=...
- * The backend accepts this via the get_current_user_sse dependency.
+ * EventSource cannot set custom headers, so it authenticates via the HttpOnly
+ * session cookie. `withCredentials: true` makes the browser send that cookie
+ * cross-origin; the backend reads it in get_current_user_sse. (We no longer
+ * pass the JWT in the URL, which would leak it via logs/history/Referer.)
  */
 export function connectSSE(visitId, handlers) {
-  const token = getToken();
-  const params = token ? `?token=${encodeURIComponent(token)}` : '';
-  const url = `${BASE_URL}/pipeline/stream/${visitId}${params}`;
-  const source = new EventSource(url);
+  const url = `${BASE_URL}/pipeline/stream/${visitId}`;
+  const source = new EventSource(url, { withCredentials: true });
 
   for (const eventName of SSE_EVENTS) {
     source.addEventListener(eventName, (event) => {

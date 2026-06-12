@@ -1,42 +1,25 @@
-const TOKEN_KEY = 'medscribe_token';
-
-export function getToken() {
-  return localStorage.getItem(TOKEN_KEY);
-}
-
-export function setToken(token) {
-  localStorage.setItem(TOKEN_KEY, token);
-}
-
-export function clearToken() {
-  localStorage.removeItem(TOKEN_KEY);
-}
-
 /**
- * Decode the payload of a JWT without verifying its signature.
- * Verification is the server's job — the frontend uses this only for
- * UI hints (display name, role, expiry check).
+ * Auth token handling.
+ *
+ * The session JWT lives in an HttpOnly cookie that the browser manages and
+ * JavaScript can never read — this is what makes the app resistant to token
+ * theft via XSS. The frontend therefore keeps NO token in localStorage.
+ *
+ * The only thing we hold here is the CSRF token (double-submit pattern). With a
+ * cross-site API the CSRF cookie is set on the API origin and is not readable
+ * via document.cookie, so we fetch it from GET /auth/csrf and keep it in memory
+ * to echo back in the X-CSRF-Token header on state-changing requests.
  */
-export function decodeToken(token) {
-  if (!token) return null;
-  try {
-    const payload = token.split('.')[1];
-    if (!payload) return null;
-    const base64 = payload.replace(/-/g, '+').replace(/_/g, '/');
-    const padded = base64 + '==='.slice((base64.length + 3) % 4);
-    return JSON.parse(atob(padded));
-  } catch {
-    return null;
-  }
+let csrfToken = null;
+
+export function setCsrfToken(token) {
+  csrfToken = token || null;
 }
 
-/** Returns true only if a token exists and (if present) its exp is in the future. */
-export function isAuthenticated() {
-  const token = getToken();
-  if (!token) return false;
-  const payload = decodeToken(token);
-  if (payload?.exp && payload.exp * 1000 < Date.now()) {
-    return false;
-  }
-  return true;
+export function getCsrfToken() {
+  return csrfToken;
+}
+
+export function clearCsrfToken() {
+  csrfToken = null;
 }

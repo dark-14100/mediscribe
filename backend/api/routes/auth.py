@@ -2,15 +2,26 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user
 from core.config import settings
 from core.constants import DOCTOR_ROLE
+from core.cookies import (
+    CSRF_COOKIE,
+    clear_auth_cookies,
+    set_auth_cookies,
+    set_csrf_cookie,
+)
 from core.ratelimit import limiter
-from core.security import create_access_token, hash_password, verify_password
+from core.security import (
+    create_access_token,
+    generate_csrf_token,
+    hash_password,
+    verify_password,
+)
 from db.session import get_db
 from models.user import User
 from schemas.user import Token, UserCreate, UserLogin, UserRead
@@ -63,6 +74,7 @@ async def register(
 async def login(
     request: Request,
     payload: UserLogin,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ) -> Token:
     user = await db.scalar(select(User).where(User.email == payload.email))
@@ -73,8 +85,36 @@ async def login(
         )
 
     token = create_access_token(subject=str(user.id), role=user.role)
+    # Set the session in an HttpOnly cookie (browser SPA) + a readable CSRF
+    # companion cookie. The token is still returned in the body for non-browser
+    # API clients that authenticate with the Authorization header.
+    set_auth_cookies(response, token, generate_csrf_token())
     log.info("[auth] login user_id=%s", user.id)
     return Token(access_token=token, token_type="bearer")
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout() -> Response:
+    """Clear the auth + CSRF cookies. Safe to call without a valid session."""
+    response = Response(status_code=status.HTTP_204_NO_CONTENT)
+    clear_auth_cookies(response)
+    return response
+
+
+@router.get("/csrf")
+async def csrf(request: Request, response: Response) -> dict[str, str]:
+    """Return the current CSRF token for the double-submit defence.
+
+    A SPA on a different origin can't read the cross-site CSRF cookie via
+    document.cookie, so it fetches the token here (the cookie is sent with the
+    request automatically) and echoes it back in the X-CSRF-Token header on
+    state-changing requests.
+    """
+    token = request.cookies.get(CSRF_COOKIE)
+    if not token:
+        token = generate_csrf_token()
+        set_csrf_cookie(response, token)
+    return {"csrf_token": token}
 
 
 @router.get("/me", response_model=UserRead)

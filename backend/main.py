@@ -21,6 +21,7 @@ from api.routes import patients as patients_routes
 from api.routes import pipeline as pipeline_routes
 from api.routes import visits as visits_routes
 from core.config import settings
+from core.csrf import CSRFMiddleware
 from core.ratelimit import limiter
 
 logging.basicConfig(
@@ -90,6 +91,9 @@ def create_app() -> FastAPI:
     app.state.limiter = limiter
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+    # Middleware runs outermost-last: add CSRF first, then CORS, so CORS wraps
+    # everything (incl. CSRF 403s) and attaches headers to those responses too.
+    app.add_middleware(CSRFMiddleware)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins_list,

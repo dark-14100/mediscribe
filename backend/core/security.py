@@ -2,6 +2,7 @@
 
 This module owns ALL crypto. No other module should call jose or passlib directly.
 """
+import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -11,6 +12,11 @@ from passlib.context import CryptContext
 from core.config import settings
 
 _pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def generate_csrf_token() -> str:
+    """Return a random token for the double-submit-cookie CSRF defence."""
+    return secrets.token_urlsafe(32)
 
 
 def hash_password(plain_password: str) -> str:

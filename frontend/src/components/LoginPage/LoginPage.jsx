@@ -1,7 +1,6 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { BASE_URL, login as apiLogin } from '../../lib/api.js';
-import { setToken } from '../../lib/auth.js';
 import { useAuth } from '../../lib/authContext.js';
 import './LoginPage.css';
 
@@ -103,8 +102,10 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const data = await apiLogin(email, password);
-      setToken(data.access_token);
+      // The backend sets the HttpOnly session cookie on this response; we don't
+      // store the token ourselves. refresh() then hydrates the user via /auth/me
+      // and primes the CSRF token.
+      await apiLogin(email, password);
       await refresh();
       navigate(redirectTo, { replace: true });
     } catch (err) {

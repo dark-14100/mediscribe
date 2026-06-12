@@ -1,5 +1,27 @@
-import { clearToken, getToken } from './auth.js';
+import { clearCsrfToken, getCsrfToken, setCsrfToken } from './auth.js';
 import { mapApiPatientToRow, sortPatientsForDisplay } from './buildPatient.js';
+
+const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
+
+/**
+ * Load the CSRF token from the backend into memory. The auth + CSRF cookies
+ * travel with this request automatically (credentials: 'include').
+ */
+export async function loadCsrfToken() {
+  try {
+    const res = await fetch(`${BASE_URL}/auth/csrf`, { credentials: 'include' });
+    if (!res.ok) {
+      setCsrfToken(null);
+      return null;
+    }
+    const data = await res.json();
+    setCsrfToken(data.csrf_token);
+    return data.csrf_token;
+  } catch {
+    setCsrfToken(null);
+    return null;
+  }
+}
 
 function normalizeBaseUrl(raw) {
   const base = (raw || 'http://localhost:8000').trim();
@@ -45,17 +67,21 @@ export async function apiFetch(path, options = {}, { retries = 0 } = {}) {
   const url = `${BASE_URL}${normalizeApiPath(path)}`;
   const headers = { ...options.headers };
 
-  const token = getToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
+  const method = (options.method || 'GET').toUpperCase();
+
+  // Cookie auth is sent ambiently; state-changing requests must carry the CSRF
+  // token (double-submit). Lazily fetch it the first time it's needed.
+  if (!SAFE_METHODS.has(method)) {
+    let csrf = getCsrfToken();
+    if (!csrf) csrf = await loadCsrfToken();
+    if (csrf) headers['X-CSRF-Token'] = csrf;
   }
 
-  const method = (options.method || 'GET').toUpperCase();
   const canRetry = method === 'GET' && retries > 0;
 
   let response;
   for (let attempt = 0; attempt <= retries; attempt += 1) {
-    response = await fetch(url, { ...options, headers });
+    response = await fetch(url, { ...options, headers, credentials: 'include' });
     if (!canRetry || response.status !== 500 || attempt >= retries) {
       break;
     }
@@ -63,9 +89,9 @@ export async function apiFetch(path, options = {}, { retries = 0 } = {}) {
   }
 
   if (response.status === 401) {
-    // Token is missing, expired, or invalid — drop it so the next
-    // PrivateRoute check bounces the user to /login.
-    clearToken();
+    // Session cookie is missing/expired/invalid. Drop the in-memory CSRF token
+    // so the next PrivateRoute check bounces the user to /login.
+    clearCsrfToken();
     const error = new Error('Unauthorized');
     error.status = 401;
     error.response = response;
@@ -94,6 +120,7 @@ export async function login(email, password) {
     response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify({ email: normalizedEmail, password }),
     });
   } catch {
@@ -125,15 +152,24 @@ export async function login(email, password) {
   return response.json();
 }
 
+/** Clear the server-side session cookies and the in-memory CSRF token. */
+export async function logout() {
+  try {
+    await fetch(`${BASE_URL}/auth/logout`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+  } catch {
+    // ignore — we clear local state regardless
+  }
+  clearCsrfToken();
+}
+
 /** Fetch the currently authenticated user, or null if not logged in. */
 export async function fetchCurrentUser() {
-  const token = getToken();
-  if (!token) return null;
   const url = `${BASE_URL}/auth/me`;
   try {
-    const res = await fetch(url, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await fetch(url, { credentials: 'include' });
     if (!res.ok) return null;
     return await res.json();
   } catch {

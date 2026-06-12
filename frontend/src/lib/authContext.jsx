@@ -1,30 +1,20 @@
 import { useCallback, useEffect, useState } from 'react';
-import { fetchCurrentUser } from './api.js';
-import { clearToken, decodeToken, getToken, isAuthenticated } from './auth.js';
+import { fetchCurrentUser, loadCsrfToken, logout as apiLogout } from './api.js';
 import { AuthContext } from './authContext.js';
 
 /**
- * Resolve the best-known user info from whatever is available right now.
- *
- * Order of preference:
- *   1. /auth/me response (if reachable).
- *   2. JWT payload (gives us role + id; falls back to placeholder name).
- *   3. null (no token).
+ * Resolve the current user from the session cookie via /auth/me. The JWT is
+ * HttpOnly so JS can't read it — the server is the single source of truth for
+ * whether we're authenticated.
  */
 async function resolveUser() {
-  if (!isAuthenticated()) return null;
-
   const fetched = await fetchCurrentUser();
-  if (fetched) return fetched;
-
-  const payload = decodeToken(getToken());
-  if (!payload) return null;
-  return {
-    id: payload.sub,
-    role: payload.role,
-    full_name: 'Demo User',
-    email: 'dr.demo@example.com',
-  };
+  if (fetched) {
+    // Prime the in-memory CSRF token so the first mutation doesn't have to
+    // round-trip for it.
+    await loadCsrfToken();
+  }
+  return fetched || null;
 }
 
 export function AuthProvider({ children }) {
@@ -54,8 +44,8 @@ export function AuthProvider({ children }) {
     };
   }, []);
 
-  const signOut = useCallback(() => {
-    clearToken();
+  const signOut = useCallback(async () => {
+    await apiLogout();
     setUser(null);
     setAuthed(false);
   }, []);

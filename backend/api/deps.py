@@ -2,25 +2,29 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import Depends, Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.constants import ADMIN_ROLE, DOCTOR_ROLE
+from core.cookies import ACCESS_COOKIE
 from core.security import decode_access_token
 from db.session import get_db
 from models.user import User
 
 
-async def get_current_user(
-    authorization: Annotated[str | None, Header()] = None,
-    db: AsyncSession = Depends(get_db),
-) -> User:
-    """Resolve the current User from the Authorization: Bearer <jwt> header."""
-    if not authorization or not authorization.lower().startswith("bearer "):
+def _extract_token(request: Request, authorization: str | None) -> str | None:
+    """Pull the JWT from the Authorization header (API clients) or, failing
+    that, the HttpOnly access-token cookie (browser SPA / EventSource)."""
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization.split(" ", 1)[1].strip()
+    return request.cookies.get(ACCESS_COOKIE)
+
+
+async def _user_from_token(token: str | None, db: AsyncSession) -> User:
+    if not token:
         raise HTTPException(
             status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token"
         )
-    token = authorization.split(" ", 1)[1].strip()
     try:
         payload = decode_access_token(token)
     except ValueError as exc:
@@ -48,49 +52,26 @@ async def get_current_user(
     return user
 
 
-async def get_current_user_sse(
+async def get_current_user(
+    request: Request,
+    authorization: Annotated[str | None, Header()] = None,
     db: AsyncSession = Depends(get_db),
-    token: Annotated[
-        str | None,
-        Query(description="JWT for SSE — EventSource cannot set Authorization headers"),
-    ] = None,
+) -> User:
+    """Resolve the current User from the Authorization header or auth cookie."""
+    return await _user_from_token(_extract_token(request, authorization), db)
+
+
+async def get_current_user_sse(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
     authorization: Annotated[str | None, Header()] = None,
 ) -> User:
-    """Resolve the current User from either ?token= query param (SSE/EventSource)
-    or the standard Authorization: Bearer <jwt> header."""
-    raw_token: str | None = None
-    if token:
-        raw_token = token
-    elif authorization and authorization.lower().startswith("bearer "):
-        raw_token = authorization.split(" ", 1)[1].strip()
+    """Resolve the current User for SSE/EventSource.
 
-    if not raw_token:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token"
-        )
-    try:
-        payload = decode_access_token(raw_token)
-    except ValueError as exc:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired token"
-        ) from exc
-
-    user_id_raw = payload.get("sub")
-    if not user_id_raw:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Token missing subject"
-        )
-    try:
-        user_id = UUID(user_id_raw)
-    except (ValueError, TypeError) as exc:
-        raise HTTPException(
-            status.HTTP_401_UNAUTHORIZED, detail="Invalid token subject"
-        ) from exc
-
-    user = await db.get(User, user_id)
-    if user is None:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User not found")
-    return user
+    EventSource cannot set an Authorization header, so browsers authenticate via
+    the HttpOnly cookie (sent automatically with ``withCredentials``). The
+    Authorization header is still accepted for non-browser clients."""
+    return await _user_from_token(_extract_token(request, authorization), db)
 
 
 async def require_doctor(
