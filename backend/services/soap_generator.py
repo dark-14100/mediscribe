@@ -7,6 +7,7 @@ from typing import Any
 import httpx
 
 from core.config import settings
+from services.groq_retry import call_with_retries
 
 logger = logging.getLogger(__name__)
 
@@ -85,38 +86,46 @@ def _parse_llm_content(content: str) -> dict[str, Any]:
     return parsed
 
 
+async def _request_soap_completion(user_message: str) -> httpx.Response:
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            GROQ_CHAT_URL,
+            headers={
+                "Authorization": f"Bearer {settings.GROQ_API_KEY}",
+                "Content-Type": "application/json",
+            },
+            json={
+                "model": GROQ_MODEL,
+                "messages": [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": user_message},
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1,
+                "max_tokens": 1000,
+            },
+            timeout=settings.GROQ_TIMEOUT_SECONDS,
+        )
+
+    if response.status_code != 200:
+        logger.error(
+            "[SOAP_GENERATOR] Groq API error %s: %s",
+            response.status_code,
+            response.text,
+        )
+        response.raise_for_status()
+    return response
+
+
 async def generate_soap(transcript: list[Any]) -> dict:
     logger.info("[SOAP_GENERATOR] Starting SOAP generation")
     try:
         user_message = _format_transcript_for_prompt(transcript)
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                GROQ_CHAT_URL,
-                headers={
-                    "Authorization": f"Bearer {settings.GROQ_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "model": GROQ_MODEL,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {"role": "user", "content": user_message},
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.1,
-                    "max_tokens": 1000,
-                },
-                timeout=60.0,
-            )
-
-        if response.status_code != 200:
-            logger.error(
-                "[SOAP_GENERATOR] Groq API error %s: %s",
-                response.status_code,
-                response.text,
-            )
-            response.raise_for_status()
+        response = await call_with_retries(
+            lambda: _request_soap_completion(user_message),
+            label="soap_generator",
+        )
 
         data = response.json()
         choices = data.get("choices") or []

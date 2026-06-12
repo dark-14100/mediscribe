@@ -100,16 +100,31 @@ async def _maybe_call(
     *args: Any,
     default: Any,
     label: str,
+    degraded: list[str] | None = None,
     **kwargs: Any,
 ) -> Any:
-    """Call an optional AI service; if unavailable, log and return ``default``."""
+    """Call an AI service and degrade gracefully on any failure.
+
+    If the service module is missing OR the call raises at runtime (e.g. the
+    Groq API is down after retries), we log it, record ``label`` in
+    ``degraded`` so the caller can surface a partial-result warning, and return
+    ``default`` instead of letting the exception tear down the whole pipeline.
+    """
     if func is None:
         log.info("[pipeline] %s unavailable — returning default", label)
+        if degraded is not None:
+            degraded.append(label)
         return default
-    result = func(*args, **kwargs)
-    if asyncio.iscoroutine(result):
-        result = await result
-    return result
+    try:
+        result = func(*args, **kwargs)
+        if asyncio.iscoroutine(result):
+            result = await result
+        return result
+    except Exception:  # noqa: BLE001 — degrade rather than crash the pipeline
+        log.exception("[pipeline] %s failed — degrading to default", label)
+        if degraded is not None:
+            degraded.append(label)
+        return default
 
 
 # ---------------------------------------------------------------------------
@@ -291,6 +306,9 @@ async def _run_pipeline(
     DB write happens after every step has completed.
     """
     visit_id_str = str(visit.id)
+    # Steps that failed at runtime and fell back to a default. Surfaced to the
+    # client so the doctor knows the note is partial rather than complete.
+    degraded_steps: list[str] = []
 
     # --- Step 2: SOAP generation -----------------------------------------
     # NB: the AI team's services/soap_generator.py exposes `generate_soap`,
@@ -301,11 +319,26 @@ async def _run_pipeline(
         or _resolve("services.soap_generator", "generate"),
         "SOAP generator",
     )
-    soap_note: SOAPNote = await _maybe_call(
-        soap_fn, payload.transcript, default=SOAPNote(), label="soap_generator"
+    # SOAP is the one "required" step, but a Groq outage shouldn't block the
+    # doctor entirely: degrade to an empty SOAP skeleton they can fill in
+    # manually instead of failing the whole run.
+    soap_raw: Any = await _maybe_call(
+        soap_fn,
+        payload.transcript,
+        default=SOAPNote(),
+        label="soap_generator",
+        degraded=degraded_steps,
     )
-    if not isinstance(soap_note, SOAPNote):  # tolerate dict returns
-        soap_note = SOAPNote.model_validate(soap_note)
+    if isinstance(soap_raw, SOAPNote):
+        soap_note = soap_raw
+    else:  # tolerate dict returns; degrade on anything unparseable
+        try:
+            soap_note = SOAPNote.model_validate(soap_raw)
+        except Exception:  # noqa: BLE001
+            log.exception("[pipeline] soap_generator returned unparseable output")
+            soap_note = SOAPNote()
+            if "soap_generator" not in degraded_steps:
+                degraded_steps.append("soap_generator")
     await bus.publish(visit_id_str, EVENT_SOAP_READY, soap_note.model_dump(mode="json"))
 
     # --- Step 3: History retrieval (RAG) ---------------------------------
@@ -317,6 +350,7 @@ async def _run_pipeline(
         db,
         default=[],
         label="history_retrieval",
+        degraded=degraded_steps,
     )
 
     # --- Step 4: Parallel intelligence agents ----------------------------
@@ -332,9 +366,14 @@ async def _run_pipeline(
             list(patient.active_medications or []),
             default=[],
             label="anomaly_agent",
+            degraded=degraded_steps,
         ),
         _maybe_call(
-            differential_fn, soap_note, default=[], label="differential_agent"
+            differential_fn,
+            soap_note,
+            default=[],
+            label="differential_agent",
+            degraded=degraded_steps,
         ),
         _maybe_call(
             drift_fn,
@@ -342,6 +381,7 @@ async def _run_pipeline(
             payload.transcript,
             default=None,
             label="drift_agent",
+            degraded=degraded_steps,
         ),
     )
     await bus.publish(visit_id_str, EVENT_ANOMALIES_READY, {"anomalies": _serialise(anomalies)})
@@ -357,7 +397,11 @@ async def _run_pipeline(
     # --- Step 5: Compliance (sequential, after Step 4) -------------------
     compliance_fn = _resolve("services.compliance", "check")
     compliance_result = await _maybe_call(
-        compliance_fn, soap_note, default=None, label="compliance"
+        compliance_fn,
+        soap_note,
+        default=None,
+        label="compliance",
+        degraded=degraded_steps,
     )
     compliance_status = (
         getattr(compliance_result, "status", None)
@@ -380,7 +424,13 @@ async def _run_pipeline(
     trajectory_fn = _resolve("services.trajectory", "compute")
 
     bias_flags, trajectory_result = await asyncio.gather(
-        _maybe_call(bias_fn, soap_note, default=[], label="bias_review"),
+        _maybe_call(
+            bias_fn,
+            soap_note,
+            default=[],
+            label="bias_review",
+            degraded=degraded_steps,
+        ),
         _maybe_call(
             trajectory_fn,
             patient.id,
@@ -388,6 +438,7 @@ async def _run_pipeline(
             db,
             default=None,
             label="trajectory",
+            degraded=degraded_steps,
         ),
     )
     await bus.publish(
@@ -422,6 +473,13 @@ async def _run_pipeline(
     await db.commit()
     await db.refresh(visit)
 
+    if degraded_steps:
+        log.warning(
+            "[pipeline] visit_id=%s completed with degraded steps: %s",
+            visit_id_str,
+            ", ".join(degraded_steps),
+        )
+
     return PipelinePayload(
         visit_id=visit.id,
         soap_note=soap_note,
@@ -432,6 +490,7 @@ async def _run_pipeline(
         compliance_notes=compliance_notes or [],
         bias_flags=_serialise(bias_flags) or [],
         trajectory=_serialise(trajectory_result),
+        degraded_steps=degraded_steps,
     )
 
 
@@ -459,7 +518,11 @@ async def run(
     visit_id_str = str(visit.id)
     try:
         result = await _run_pipeline(payload, visit, patient, db, bus)
-        await bus.publish(visit_id_str, EVENT_PIPELINE_DONE, {"visit_id": visit_id_str})
+        await bus.publish(
+            visit_id_str,
+            EVENT_PIPELINE_DONE,
+            {"visit_id": visit_id_str, "degraded_steps": result.degraded_steps},
+        )
         return result
     except HTTPException as exc:
         await bus.publish(visit_id_str, EVENT_ERROR, {"detail": exc.detail})

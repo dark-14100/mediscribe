@@ -141,3 +141,7 @@ class PipelinePayload(BaseModel):
     compliance_notes: list[ComplianceNote] = Field(default_factory=list)
     bias_flags: list[BiasFlag] = Field(default_factory=list)
     trajectory: TrajectoryResult | None = None
+    # Names of pipeline steps that failed at runtime and fell back to a default.
+    # Empty means every step completed normally; non-empty signals the result is
+    # partial/degraded so the UI can flag it to the doctor.
+    degraded_steps: list[str] = Field(default_factory=list)

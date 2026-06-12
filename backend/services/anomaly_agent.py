@@ -14,6 +14,7 @@ import httpx
 
 from core.config import settings
 from schemas.pipeline import AnomalyFlag, SOAPNote
+from services.groq_retry import call_with_retries
 
 logger = logging.getLogger(__name__)
 
@@ -149,7 +150,7 @@ async def detect(
 
     logger.info("[ANOMALY_AGENT] Starting anomaly detection")
 
-    try:
+    async def _request() -> httpx.Response:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 GROQ_CHAT_URL,
@@ -167,9 +168,8 @@ async def detect(
                     "temperature": 0.1,
                     "max_tokens": 1000,
                 },
-                timeout=60.0,
+                timeout=settings.GROQ_TIMEOUT_SECONDS,
             )
-
         if response.status_code != 200:
             logger.error(
                 "[ANOMALY_AGENT] Groq API error %s: %s",
@@ -177,6 +177,10 @@ async def detect(
                 response.text,
             )
             response.raise_for_status()
+        return response
+
+    try:
+        response = await call_with_retries(_request, label="anomaly_agent")
 
         data = response.json()
         choices = data.get("choices") or []

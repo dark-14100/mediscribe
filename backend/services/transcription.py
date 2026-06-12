@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 import httpx
 
 from core.config import settings
+from services.groq_retry import call_with_retries
 
 if TYPE_CHECKING:
     from fastapi import UploadFile
@@ -68,7 +69,7 @@ async def _diarize_with_llama(
     """
     user_message = _build_diarize_user_message(texts)
 
-    try:
+    async def _request() -> httpx.Response:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 GROQ_CHAT_URL,
@@ -88,14 +89,17 @@ async def _diarize_with_llama(
                 },
                 timeout=30.0,
             )
-
         if response.status_code != 200:
             logger.warning(
                 "[TRANSCRIPTION] LLaMA diarization API error %s: %s",
                 response.status_code,
                 response.text,
             )
-            return None
+            response.raise_for_status()
+        return response
+
+    try:
+        response = await call_with_retries(_request, label="diarization")
 
         payload = response.json()
         raw_content = payload["choices"][0]["message"]["content"]
@@ -179,26 +183,29 @@ async def _call_groq_whisper(
         temp_path = Path(temp_dir) / f"audio{suffix}"
         temp_path.write_bytes(audio_bytes)
 
-        async with httpx.AsyncClient() as client:
-            with temp_path.open("rb") as audio_file:
-                response = await client.post(
-                    GROQ_TRANSCRIPTION_URL,
-                    headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
-                    files={"file": (filename, audio_file, content_type)},
-                    data={
-                        "model": GROQ_WHISPER_MODEL,
-                        "response_format": "verbose_json",
-                    },
-                    timeout=120.0,
+        async def _request() -> httpx.Response:
+            async with httpx.AsyncClient() as client:
+                with temp_path.open("rb") as audio_file:
+                    response = await client.post(
+                        GROQ_TRANSCRIPTION_URL,
+                        headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
+                        files={"file": (filename, audio_file, content_type)},
+                        data={
+                            "model": GROQ_WHISPER_MODEL,
+                            "response_format": "verbose_json",
+                        },
+                        timeout=120.0,
+                    )
+            if response.status_code != 200:
+                logger.error(
+                    "[TRANSCRIPTION] Groq Whisper API error %s: %s",
+                    response.status_code,
+                    response.text,
                 )
+                response.raise_for_status()
+            return response
 
-        if response.status_code != 200:
-            logger.error(
-                "[TRANSCRIPTION] Groq Whisper API error %s: %s",
-                response.status_code,
-                response.text,
-            )
-            response.raise_for_status()
+        response = await call_with_retries(_request, label="whisper")
 
         payload = response.json()
         segments: list[dict] = payload.get("segments") or []

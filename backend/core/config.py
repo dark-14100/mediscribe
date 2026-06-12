@@ -31,6 +31,12 @@ class Settings(BaseSettings):
     # --- Groq ---
     GROQ_API_KEY: str = ""
     GROQ_BASE_URL: str = "https://api.groq.com"
+    # Resilience: how many times to retry a Groq call on transient failures
+    # (timeouts, connection errors, 429/5xx) before giving up, plus the base
+    # exponential-backoff delay and per-request timeout.
+    GROQ_MAX_RETRIES: int = 2
+    GROQ_RETRY_BACKOFF_SECONDS: float = 0.5
+    GROQ_TIMEOUT_SECONDS: float = 60.0
 
     # --- Backblaze B2 ---
     BACKBLAZE_KEY_ID: str = ""
