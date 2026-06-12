@@ -32,7 +32,9 @@ class Settings(BaseSettings):
     JWT_SECRET_KEY: str
     SECRET_KEY: str = ""
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 60 * 24
+    # Kept to a single clinical shift rather than a full day to limit the blast
+    # radius of a stolen token.
+    JWT_EXPIRE_MINUTES: int = 60 * 8
 
     # --- Groq ---
     GROQ_API_KEY: str = ""
@@ -45,9 +47,12 @@ class Settings(BaseSettings):
     GROQ_TIMEOUT_SECONDS: float = 60.0
 
     # --- Backblaze B2 ---
+    # The bucket is expected to be PRIVATE; audio is fetched via short-lived
+    # signed URLs (see AUDIO_URL_TTL_SECONDS) rather than stored public links.
     BACKBLAZE_KEY_ID: str = ""
     BACKBLAZE_APP_KEY: str = ""
     BACKBLAZE_BUCKET: str = ""
+    AUDIO_URL_TTL_SECONDS: int = 300
 
     # --- ML / pipeline tunables ---
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

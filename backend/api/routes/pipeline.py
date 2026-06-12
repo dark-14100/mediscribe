@@ -15,7 +15,6 @@ is empty (Phase-3-style scaffolding) the route returns HTTP 503 with a clear
 message rather than 500-ing on a missing attribute.
 """
 import asyncio
-import base64
 import importlib
 import json
 import logging
@@ -54,15 +53,18 @@ from models.patient import Patient
 from models.user import User
 from models.visit import Visit
 from schemas.pipeline import (
+    AudioUrlResponse,
     PipelinePayload,
     PipelineRunRequest,
     SOAPNote,
     TrajectoryResult,
     TranscribeResponse,
 )
+from core.audit import log_phi_access
 from core.config import settings
 from core.ratelimit import limiter
 from services.event_bus import EventBus, get_event_bus
+from services.storage import StorageClient, get_storage
 
 log = logging.getLogger("medscribe.pipeline")
 router = APIRouter(prefix="/pipeline", tags=["pipeline"])
@@ -214,6 +216,7 @@ async def transcribe(
     request: Request,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
+    storage: Annotated[StorageClient, Depends(get_storage)],
     audio: UploadFile = File(...),
     visit_id: Annotated[UUID | None, Query()] = None,
 ) -> TranscribeResponse:
@@ -243,8 +246,9 @@ async def transcribe(
         )
 
     # Confirm caller owns the visit (if a visit_id was supplied).
+    visit: Visit | None = None
     if visit_id is not None:
-        await _load_my_visit(visit_id, user, db)
+        visit = await _load_my_visit(visit_id, user, db)
 
     if not settings.GROQ_API_KEY:
         raise HTTPException(
@@ -273,23 +277,24 @@ async def transcribe(
             detail="No speech detected in the recording. Try speaking longer or check your microphone.",
         )
 
-    # Fire-and-forget audio upload via Celery.
+    # Archive audio to object storage in-process. We deliberately do NOT route
+    # raw audio (PHI) through the Celery/Redis broker, where it would sit
+    # base64-encoded in an unencrypted queue. Archiving failures must not fail
+    # the transcription, so we degrade to audio_upload_queued=False instead.
     audio_upload_queued = False
-    if visit_id is not None:
+    if visit is not None:
         try:
-            from workers.celery_app import celery_app
-
-            celery_app.send_task(
-                "workers.tasks.upload_audio_to_b2",
-                args=[
-                    str(visit_id),
-                    base64.b64encode(audio_bytes).decode("ascii"),
-                    audio.content_type or "audio/webm",
-                ],
+            url = await storage.upload_audio(
+                audio_bytes, str(visit.id), audio.content_type or "audio/webm"
             )
+            visit.audio_url = url
+            await db.commit()
             audio_upload_queued = True
         except Exception as exc:  # noqa: BLE001
-            log.warning("[pipeline] failed to queue audio upload: %s", exc)
+            await db.rollback()
+            log.warning(
+                "[pipeline] audio archival failed visit_id=%s: %s", visit.id, exc
+            )
 
     return TranscribeResponse(
         visit_id=visit_id,
@@ -587,6 +592,41 @@ async def run(
 
 
 @router.get(
+    "/audio/{visit_id}",
+    response_model=AudioUrlResponse,
+    summary="Mint a short-lived signed URL for a visit's stored audio",
+)
+async def get_audio_url(
+    visit_id: Annotated[UUID, Path()],
+    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    storage: Annotated[StorageClient, Depends(get_storage)],
+) -> AudioUrlResponse:
+    """Return a time-limited signed URL for the visit's audio.
+
+    The bucket is private and only the object key is persisted, so a fresh
+    signed URL is minted per request and expires after AUDIO_URL_TTL_SECONDS.
+    """
+    visit = await db.scalar(select(Visit).where(Visit.id == visit_id))
+    if visit is None or (user.role != "admin" and visit.doctor_id != user.id):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    if not visit.audio_url:
+        raise HTTPException(
+            status.HTTP_404_NOT_FOUND, detail="No audio stored for this visit"
+        )
+    url = await storage.signed_download_url(
+        visit.audio_url, settings.AUDIO_URL_TTL_SECONDS
+    )
+    log_phi_access(
+        user_id=str(user.id),
+        action="download",
+        resource_type="audio",
+        resource_id=str(visit.id),
+    )
+    return AudioUrlResponse(url=url, expires_in=settings.AUDIO_URL_TTL_SECONDS)
+
+
+@router.get(
     "/run-status/{visit_id}",
     response_model=PipelinePayload,
     summary="Read the persisted pipeline output for a visit",
@@ -602,6 +642,12 @@ async def run_status(
         user.role != "admin" and visit.doctor_id != user.id
     ):
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
+    log_phi_access(
+        user_id=str(user.id),
+        action="read",
+        resource_type="visit",
+        resource_id=str(visit.id),
+    )
     return PipelinePayload(
         visit_id=visit.id,
         soap_note=SOAPNote.model_validate(visit.soap_note or {}),

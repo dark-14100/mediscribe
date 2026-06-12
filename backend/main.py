@@ -50,8 +50,27 @@ def _validate_production_secrets() -> None:
         )
 
 
+def _validate_production_transport() -> None:
+    """Refuse plaintext Redis in production — the broker/cache carries PHI-derived
+    data (cached summaries, task args) and must be encrypted in transit (rediss://).
+
+    Local addresses are exempted so a single-host deployment talking to a
+    co-located Redis over loopback isn't forced onto TLS.
+    """
+    if not settings.is_production:
+        return
+    url = (settings.REDIS_URL or "").strip().lower()
+    is_local = "localhost" in url or "127.0.0.1" in url or "@redis:" in url
+    if url.startswith("redis://") and not is_local:
+        raise RuntimeError(
+            "REDIS_URL must use TLS (rediss://) in production to protect "
+            "PHI-derived data in transit."
+        )
+
+
 def create_app() -> FastAPI:
     _validate_production_secrets()
+    _validate_production_transport()
 
     # Hide interactive API docs / schema in production to reduce attack surface.
     docs_kwargs: dict[str, str | None] = {}

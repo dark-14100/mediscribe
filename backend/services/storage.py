@@ -10,6 +10,12 @@ Design:
 * ``get_storage()`` is the FastAPI dependency; tests override it.
 
 Audio object keys follow the format ``audio/{visit_id}.{ext}``.
+
+PHI posture: ``upload_audio`` returns the durable *object key* (not a public
+URL), and the bucket is expected to be **private**. Callers persist the key and
+mint a short-lived signed URL via ``signed_download_url`` only when a download
+is actually needed, so we never store a long-lived, directly-fetchable link to
+patient audio.
 """
 from __future__ import annotations
 
@@ -30,7 +36,13 @@ def audio_object_name(visit_id: UUID | str, ext: str = "webm") -> str:
 class StorageClient(Protocol):
     async def upload_audio(
         self, audio_bytes: bytes, visit_id: UUID | str, content_type: str = "audio/webm"
-    ) -> str: ...
+    ) -> str:
+        """Upload audio and return its durable object key (not a fetchable URL)."""
+        ...
+
+    async def signed_download_url(self, object_key: str, expires_in: int) -> str:
+        """Return a time-limited authorized URL for a previously stored object."""
+        ...
 
 
 class B2Storage:
@@ -50,6 +62,7 @@ class B2Storage:
         # Defer SDK import so test environments without b2sdk don't fail at module load.
         from b2sdk.v2 import B2Api, InMemoryAccountInfo
 
+        self._bucket_name = bucket_name
         self._info = InMemoryAccountInfo()
         self._api = B2Api(self._info)
         self._api.authorize_account("production", key_id, app_key)
@@ -58,12 +71,14 @@ class B2Storage:
     def _upload_sync(
         self, audio_bytes: bytes, object_name: str, content_type: str
     ) -> str:
-        file_info = self._bucket.upload_bytes(
+        self._bucket.upload_bytes(
             data_bytes=audio_bytes,
             file_name=object_name,
             content_type=content_type,
         )
-        return self._api.get_download_url_for_fileid(file_info.id_)
+        # Return the object key; downloads use short-lived signed URLs minted on
+        # demand (the bucket is private, so a bare URL would not be fetchable).
+        return object_name
 
     async def upload_audio(
         self,
@@ -82,9 +97,20 @@ class B2Storage:
             self._upload_sync, audio_bytes, object_name, content_type
         )
 
+    def _signed_url_sync(self, object_key: str, expires_in: int) -> str:
+        token = self._bucket.get_download_authorization(
+            file_name_prefix=object_key,
+            valid_duration_in_seconds=expires_in,
+        )
+        base = self._api.get_download_url_for_file_name(self._bucket_name, object_key)
+        return f"{base}?Authorization={token}"
+
+    async def signed_download_url(self, object_key: str, expires_in: int) -> str:
+        return await asyncio.to_thread(self._signed_url_sync, object_key, expires_in)
+
 
 class InMemoryStorage:
-    """Test fake — stores blobs in a dict, returns a fake URL."""
+    """Test fake — stores blobs in a dict, returns the object key."""
 
     def __init__(self) -> None:
         self.blobs: dict[str, bytes] = {}
@@ -98,7 +124,10 @@ class InMemoryStorage:
         ext = "webm" if "webm" in content_type else content_type.split("/")[-1]
         name = audio_object_name(visit_id, ext)
         self.blobs[name] = audio_bytes
-        return f"https://fake-b2.local/{name}"
+        return name
+
+    async def signed_download_url(self, object_key: str, expires_in: int) -> str:
+        return f"https://fake-b2.local/{object_key}?Authorization=test&expires_in={expires_in}"
 
 
 _storage: StorageClient | None = None

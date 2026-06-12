@@ -125,6 +125,13 @@ class TranscribeResponse(BaseModel):
     audio_upload_queued: bool = False
 
 
+class AudioUrlResponse(BaseModel):
+    """Short-lived signed URL for fetching a visit's stored audio."""
+
+    url: str
+    expires_in: int
+
+
 class PipelineRunRequest(BaseModel):
     visit_id: uuid.UUID
     transcript: list[TranscriptLine] = Field(

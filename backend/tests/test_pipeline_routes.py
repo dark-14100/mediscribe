@@ -233,6 +233,38 @@ async def test_transcribe_rejects_unsupported_content_type(client, doctor_user):
     assert resp.status_code == 415
 
 
+@pytest.mark.asyncio
+async def test_audio_url_returns_signed_link_after_transcribe(
+    client, doctor_user, ai_services_installed
+):
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    tr = await client.post(
+        "/pipeline/transcribe",
+        headers=auth_header(doctor_user),
+        files={"audio": ("clip.webm", b"raw-bytes", "audio/webm")},
+        params={"visit_id": vid},
+    )
+    assert tr.status_code == 200, tr.text
+    assert tr.json()["audio_upload_queued"] is True
+
+    resp = await client.get(
+        f"/pipeline/audio/{vid}", headers=auth_header(doctor_user)
+    )
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert vid in body["url"]
+    assert body["expires_in"] > 0
+
+
+@pytest.mark.asyncio
+async def test_audio_url_404_when_no_audio(client, doctor_user):
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    resp = await client.get(
+        f"/pipeline/audio/{vid}", headers=auth_header(doctor_user)
+    )
+    assert resp.status_code == 404
+
+
 # ---------------------------------------------------------------------------
 # /pipeline/run + SSE stream
 # ---------------------------------------------------------------------------

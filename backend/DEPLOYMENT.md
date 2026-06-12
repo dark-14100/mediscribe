@@ -216,9 +216,13 @@ Re-running wipes the prior demo data and recreates everything fresh.
 ## 11. Celery worker (for background tasks)
 
 The main web service handles HTTP. A separate Celery worker handles:
-- `upload_audio_to_b2` — uploads visit audio to Backblaze B2
 - `invalidate_patient_summary` — clears Redis summary cache
 - `embed_visit` — generates and stores SOAP + patient-speech embeddings
+
+> Audio is **not** uploaded via Celery. Routing raw audio (PHI) through the
+> Redis broker would leave it base64-encoded in an unencrypted queue, so the
+> `/pipeline/transcribe` route archives audio to a private B2 bucket in-process
+> and persists only the object key on the visit.
 
 ### On Railway
 1. In your Railway project, click **+ New Service → GitHub Repo** (same repo, same `backend/` root directory).
@@ -234,10 +238,31 @@ The main web service handles HTTP. A separate Celery worker handles:
 3. Start command: `celery -A workers.celery_app worker --loglevel=info --concurrency=2`
 4. Same env vars.
 
-> For the hackathon, the worker is optional if you don't mind B2 uploads and
-> embeddings not running. The main pipeline (SOAP, agents, SSE) works without
-> it. Visits just won't have `audio_url` populated and RAG history retrieval
-> will return empty results until embeddings are generated.
+> For the hackathon, the worker is optional if you don't mind embeddings not
+> running. The main pipeline (SOAP, agents, SSE) and audio archival work without
+> it; RAG history retrieval will return empty results until embeddings are
+> generated.
+
+---
+
+## 11a. PHI / third-party data handling
+
+This system processes Protected Health Information (PHI). Before any production
+or real-patient use:
+
+- **Business Associate Agreements (BAAs):** execute a BAA with every third party
+  that can see PHI or PHI-derived data — at minimum **Groq** (transcription +
+  LLM) and **Backblaze B2** (audio), plus your managed **Postgres** and **Redis**
+  providers. Do not send real PHI to a vendor without a signed BAA.
+- **Encryption in transit:** `REDIS_URL` must use `rediss://` (TLS) in
+  production — startup aborts otherwise for non-local hosts. Use TLS for the
+  database connection as well.
+- **Encryption at rest:** enable provider-managed at-rest encryption for
+  Postgres, Redis, and the B2 bucket.
+- **Audio storage:** the B2 bucket must be **private**; audio is retrieved only
+  via short-lived signed URLs (`GET /pipeline/audio/{visit_id}`).
+- **Audit trail:** PHI reads emit `medscribe.audit` log lines — ship these to a
+  retained, tamper-evident log sink.
 
 ---
 
