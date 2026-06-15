@@ -115,3 +115,107 @@ async def test_overall_status_reflects_worst_field():
     # subjective + objective grounded, assessment invalid-citation -> overall worst.
     assert _field_by_name(result, "subjective").status == "grounded"
     assert result.status == "ungrounded"
+
+
+# --- Phase B: optional LLM verifier (Layer 2) ------------------------------
+
+
+def _install_fake_groq(monkeypatch, *, verdict=None, raises=False, calls=None):
+    """Patch services.groq_retry.chat_completion (resolved lazily by grounding)
+    to echo a fixed verdict for every claim, recording which fields were sent."""
+    import services.groq_retry as groq
+
+    async def fake_chat_completion(*, model, messages, label, max_tokens, **kwargs):
+        import json
+
+        payload = json.loads(messages[1]["content"])
+        if calls is not None:
+            calls.append(payload["field"])
+        if raises:
+            raise RuntimeError("groq down")
+        verdicts = [
+            {"id": c["id"], "verdict": verdict, "reason": "meaning differs"}
+            for c in payload["claims"]
+        ]
+        return {"choices": [{"message": {"content": json.dumps({"verdicts": verdicts})}}]}
+
+    monkeypatch.setattr(groq, "chat_completion", fake_chat_completion)
+
+
+def _enable_llm(monkeypatch, fields="assessment,plan"):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_USE_LLM", True)
+    monkeypatch.setattr(settings, "GROUNDING_LLM_FIELDS", fields)
+
+
+@pytest.mark.asyncio
+async def test_llm_downgrades_grounded_claim(monkeypatch):
+    _enable_llm(monkeypatch)
+    _install_fake_groq(monkeypatch, verdict="NOT_SUPPORTED")
+    soap = SOAPNote(
+        subjective=SOAPField(text="", source_lines=[]),
+        objective=SOAPField(text="", source_lines=[]),
+        assessment=SOAPField(
+            text="Severe headache and nausea since yesterday.", source_lines=[2]
+        ),
+        plan=SOAPField(text="", source_lines=[]),
+    )
+    result = await verify(soap, _TRANSCRIPT)
+    assess = _field_by_name(result, "assessment")
+    assert assess.status == "ungrounded"  # rules grounded, LLM tightened it
+    assert result.checked_with == "rules+llm"
+    assert assess.unsupported_claims[0].issue == "meaning differs"
+
+
+@pytest.mark.asyncio
+async def test_llm_cannot_upgrade_partial_claim(monkeypatch):
+    _enable_llm(monkeypatch)
+    _install_fake_groq(monkeypatch, verdict="SUPPORTED")
+    # "Severe headache and chronic fatigue today." vs line 2 -> ~0.4 overlap = partial.
+    soap = SOAPNote(
+        subjective=SOAPField(text="", source_lines=[]),
+        objective=SOAPField(text="", source_lines=[]),
+        assessment=SOAPField(
+            text="Severe headache and chronic fatigue today.", source_lines=[2]
+        ),
+        plan=SOAPField(text="", source_lines=[]),
+    )
+    result = await verify(soap, _TRANSCRIPT)
+    assess = _field_by_name(result, "assessment")
+    assert assess.status == "partial"  # downgrade-only: LLM "SUPPORTED" can't raise it
+
+
+@pytest.mark.asyncio
+async def test_llm_failure_keeps_rules_result(monkeypatch):
+    _enable_llm(monkeypatch)
+    _install_fake_groq(monkeypatch, raises=True)
+    soap = SOAPNote(
+        subjective=SOAPField(text="", source_lines=[]),
+        objective=SOAPField(text="", source_lines=[]),
+        assessment=SOAPField(
+            text="Severe headache and nausea since yesterday.", source_lines=[2]
+        ),
+        plan=SOAPField(text="", source_lines=[]),
+    )
+    result = await verify(soap, _TRANSCRIPT)
+    assess = _field_by_name(result, "assessment")
+    assert assess.status == "grounded"  # preserved
+    assert result.checked_with == "rules"  # no degrade flag flipped
+
+
+@pytest.mark.asyncio
+async def test_llm_only_called_for_configured_fields(monkeypatch):
+    calls: list[str] = []
+    _enable_llm(monkeypatch, fields="assessment")  # plan excluded
+    _install_fake_groq(monkeypatch, verdict="SUPPORTED", calls=calls)
+    soap = SOAPNote(
+        subjective=SOAPField(
+            text="Severe headache and nausea since yesterday.", source_lines=[2]
+        ),
+        objective=SOAPField(text="No fever.", source_lines=[4]),
+        assessment=SOAPField(text="Severe headache reported.", source_lines=[2]),
+        plan=SOAPField(text="No fever today.", source_lines=[4]),
+    )
+    await verify(soap, _TRANSCRIPT)
+    assert calls == ["assessment"]  # never subjective/objective/plan
