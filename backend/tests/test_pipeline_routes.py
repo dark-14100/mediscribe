@@ -21,6 +21,8 @@ import pytest
 from schemas.pipeline import (
     AnomalyFlag,
     BiasFlag,
+    CodeSuggestion,
+    CodingResult,
     ComplianceNote,
     ComplianceResult,
     Differential,
@@ -122,6 +124,23 @@ def ai_services_installed(monkeypatch):
             computed_from_visits=2,
         )
 
+    async def generate_codes(soap, patient_class="established"):
+        return CodingResult(
+            icd10=[
+                CodeSuggestion(
+                    system="ICD-10",
+                    code="J06.9",
+                    description="URI",
+                    confidence=0.9,
+                    evidence_field="assessment",
+                )
+            ],
+            em=CodeSuggestion(
+                system="E&M", code="99213", confidence=0.6, evidence_field="plan"
+            ),
+            patient_class=patient_class,
+        )
+
     _install_module("services.transcription", transcribe=transcribe)
     _install_module("services.soap_generator", generate=generate)
     _install_module("services.history_retrieval", get_summaries=get_summaries)
@@ -131,6 +150,7 @@ def ai_services_installed(monkeypatch):
     _install_module("services.compliance", check=check)
     _install_module("services.bias_review", review=review)
     _install_module("services.trajectory", compute=compute)
+    _install_module("services.coding", generate_codes=generate_codes)
     yield
     for name in (
         "services.transcription",
@@ -142,6 +162,7 @@ def ai_services_installed(monkeypatch):
         "services.compliance",
         "services.bias_review",
         "services.trajectory",
+        "services.coding",
     ):
         sys.modules.pop(name, None)
 
@@ -316,6 +337,10 @@ async def test_run_assembles_full_payload(
     # De-identification runs in default "on" mode; a PHI-free report is included.
     assert body["deid"] is not None
     assert body["deid"]["applied"] is True
+    # Coding agent runs in default "suggest" mode; advisory codes are included.
+    assert body["coding"] is not None
+    assert body["coding"]["icd10"][0]["code"] == "J06.9"
+    assert body["coding"]["em"]["code"] == "99213"
 
 
 @pytest.mark.asyncio
@@ -478,6 +503,8 @@ async def test_run_publishes_events_in_order(
     assert "differentials_ready" in received
     assert "drift_ready" in received
     assert received.index("compliance_ready") > received.index("anomalies_ready")
+    assert "coding_ready" in received
+    assert received.index("coding_ready") > received.index("compliance_ready")
     assert received.index("bias_ready") > received.index("compliance_ready")
     assert received[-1] == "pipeline_done"
 
@@ -534,6 +561,9 @@ async def test_run_status_returns_persisted_payload(
     assert body["soap_note"]["subjective"]["text"] == "Headache."
     # Grounding verdict persisted to soap_audit_trail and rehydrated here.
     assert body["grounding"] is not None
+    # Coding suggestions persisted to soap_audit_trail and rehydrated here.
+    assert body["coding"] is not None
+    assert body["coding"]["icd10"][0]["code"] == "J06.9"
 
 
 @pytest.mark.asyncio

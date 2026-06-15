@@ -7,6 +7,7 @@ const SSE_EVENTS = [
   'differentials_ready',
   'drift_ready',
   'compliance_ready',
+  'coding_ready',
   'bias_ready',
   'trajectory_ready',
   'pipeline_done',

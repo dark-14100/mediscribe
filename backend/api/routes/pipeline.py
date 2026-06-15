@@ -33,13 +33,14 @@ from fastapi import (
     status,
 )
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, get_current_user_sse, require_doctor
 from core.constants import (
     EVENT_ANOMALIES_READY,
     EVENT_BIAS_READY,
+    EVENT_CODING_READY,
     EVENT_COMPLIANCE_READY,
     EVENT_DIFFERENTIALS_READY,
     EVENT_DRIFT_READY,
@@ -55,6 +56,7 @@ from models.user import User
 from models.visit import Visit
 from schemas.pipeline import (
     AudioUrlResponse,
+    CodingResult,
     DeidReport,
     GroundingResult,
     PipelinePayload,
@@ -169,6 +171,19 @@ async def _load_my_visit(visit_id: UUID, user: User, db: AsyncSession) -> Visit:
     if visit is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Visit not found")
     return visit
+
+
+async def _is_first_visit(patient_id: UUID, db: AsyncSession) -> bool:
+    """True when this patient has only one visit on record (drives new vs
+    established E&M coding). Best-effort: any error treats them as established."""
+    try:
+        count = await db.scalar(
+            select(func.count()).select_from(Visit).where(Visit.patient_id == patient_id)
+        )
+        return (count or 0) <= 1
+    except Exception:  # noqa: BLE001 — coding is advisory; never break the run
+        log.warning("[pipeline] first-visit check failed for patient %s", patient_id)
+        return False
 
 
 def _sse_format(event_name: str, data: dict[str, Any]) -> str:
@@ -541,6 +556,27 @@ async def _run_pipeline(
         },
     )
 
+    # --- Step 5.5: Coding agent (advisory ICD-10 / CPT / E&M) ------------
+    # Turns the (de-identified) note into billing suggestions. Advisory only —
+    # never blocks; config-gated; degrades like every other step.
+    coding_result: CodingResult | None = None
+    if settings.CODING_MODE.strip().lower() != "off" and not soap_blocked:
+        coding_fn = _resolve("services.coding", "generate_codes")
+        patient_class = (
+            "new" if await _is_first_visit(patient.id, db) else "established"
+        )
+        coding_result = await _maybe_call(
+            coding_fn,
+            soap_note,
+            patient_class=patient_class,
+            default=None,
+            label="coding_agent",
+            degraded=degraded_steps,
+        )
+        await bus.publish(
+            visit_id_str, EVENT_CODING_READY, {"coding": _reid(coding_result)}
+        )
+
     # --- Steps 6 + 7: Bias review + Trajectory (concurrent) --------------
     bias_fn = _resolve("services.bias_review", "review")
     trajectory_fn = _resolve("services.trajectory", "compute")
@@ -591,11 +627,14 @@ async def _run_pipeline(
 
     # --- Final: persist everything to the visit row ----------------------
     visit.soap_note = soap_note_pub
+    coding_pub = _reid(coding_result) if coding_result is not None else None
     audit_trail: dict[str, Any] = {}
     if grounding_pub is not None:
         audit_trail["grounding"] = grounding_pub
     if deid_report is not None:
         audit_trail["deid"] = deid_report.model_dump(mode="json")
+    if coding_pub is not None:
+        audit_trail["coding"] = coding_pub
     visit.soap_audit_trail = audit_trail
     visit.anomalies = _as_json_list(_reid(anomalies))
     visit.differentials = _as_json_list(_reid(differentials))
@@ -643,6 +682,9 @@ async def _run_pipeline(
             else None
         ),
         deid=deid_report,
+        coding=(
+            CodingResult.model_validate(coding_pub) if coding_pub is not None else None
+        ),
         degraded_steps=degraded_steps,
     )
 
@@ -783,6 +825,12 @@ async def run_status(
             DeidReport.model_validate(visit.soap_audit_trail["deid"])
             if isinstance(visit.soap_audit_trail, dict)
             and visit.soap_audit_trail.get("deid")
+            else None
+        ),
+        coding=(
+            CodingResult.model_validate(visit.soap_audit_trail["coding"])
+            if isinstance(visit.soap_audit_trail, dict)
+            and visit.soap_audit_trail.get("coding")
             else None
         ),
     )

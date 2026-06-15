@@ -134,6 +134,38 @@ class DeidReport(BaseModel):
     residual_placeholders: int = 0
 
 
+# --- Coding (advisory ICD-10 / CPT / E&M billing suggestions) ---
+
+CodeSystem = Literal["ICD-10", "CPT", "E&M"]
+
+
+class CodeSuggestion(BaseModel):
+    """A single advisory billing/diagnosis code with its justification."""
+
+    system: CodeSystem
+    code: str
+    description: str = ""
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    evidence_field: SOAPFieldName | None = None
+    evidence_lines: list[int] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class CodingResult(BaseModel):
+    """Advisory coding suggestions for a visit. NOT a final bill — the provider
+    is responsible for the codes they submit."""
+
+    icd10: list[CodeSuggestion] = Field(default_factory=list)
+    cpt: list[CodeSuggestion] = Field(default_factory=list)
+    em: CodeSuggestion | None = None
+    patient_class: Literal["new", "established"] = "established"
+    checked_with: Literal["rules", "rules+llm"] = "rules+llm"
+    disclaimer: str = (
+        "AI-suggested codes are advisory. The provider is responsible for "
+        "final code selection before billing."
+    )
+
+
 # --- Grounding (faithfulness of SOAP claims vs the transcript) ---
 
 GroundingStatus = Literal["grounded", "partial", "ungrounded"]
@@ -203,6 +235,7 @@ class PipelinePayload(BaseModel):
     trajectory: TrajectoryResult | None = None
     grounding: GroundingResult | None = None
     deid: DeidReport | None = None
+    coding: CodingResult | None = None
     # Names of pipeline steps that failed at runtime and fell back to a default.
     # Empty means every step completed normally; non-empty signals the result is
     # partial/degraded so the UI can flag it to the doctor.

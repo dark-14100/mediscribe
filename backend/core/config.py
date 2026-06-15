@@ -75,6 +75,17 @@ class Settings(BaseSettings):
     # Record any placeholder that survives re-identification (should be 0).
     DEID_FLAG_RESIDUAL: bool = True
 
+    # --- Coding agent (ICD-10 / CPT / E&M billing suggestions) ---
+    # Advisory only — never blocks sign-off, never auto-bills.
+    #   off     = skip entirely
+    #   suggest = generate advisory codes (default)
+    CODING_MODE: str = "suggest"
+    CODING_MODEL: str = "llama-3.3-70b-versatile"
+    # Cap on combined ICD-10 + CPT suggestions to keep the panel focused.
+    CODING_MAX_CODES: int = 8
+    # Estimate the office-visit E&M level (new/established aware).
+    CODING_INCLUDE_EM: bool = True
+
     # --- Grounding gate (faithfulness verification of SOAP claims) ---
     # Checks each SOAP sentence is supported by its cited transcript lines.
     #   off     = skip entirely

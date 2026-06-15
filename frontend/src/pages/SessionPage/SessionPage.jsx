@@ -5,6 +5,7 @@ import AnomalyFlag from '../../components/AnomalyFlag/AnomalyFlag';
 import AudioRecorder from '../../components/AudioRecorder/AudioRecorder';
 import BiasReviewPanel from '../../components/BiasReviewPanel/BiasReviewPanel';
 import CognitiveLoadNudge from '../../components/CognitiveLoadNudge/CognitiveLoadNudge';
+import CodingPanel from '../../components/CodingPanel/CodingPanel';
 import ComplianceBadge from '../../components/ComplianceBadge/ComplianceBadge';
 import ConfirmDialog from '../../components/ConfirmDialog/ConfirmDialog';
 import DifferentialPanel from '../../components/DifferentialPanel/DifferentialPanel';
@@ -141,6 +142,7 @@ export default function SessionPage() {
   const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
 
   const [grounding, setGrounding] = useState(null);
+  const [coding, setCoding] = useState(null);
   const [anomalies, setAnomalies] = useState([]);
   const [differentials, setDifferentials] = useState([]);
   const [compliance, setCompliance] = useState(null);
@@ -201,6 +203,10 @@ export default function SessionPage() {
       } else if (data?.compliance_status) {
         setCompliance({ status: data.compliance_status, notes: data.compliance_notes ?? [] });
       }
+    },
+    coding_ready(event) {
+      const data = parseSSEData(event);
+      if (data?.coding) setCoding(data.coding);
     },
     bias_ready(event) {
       const data = parseSSEData(event);
@@ -268,6 +274,7 @@ export default function SessionPage() {
         if (existingTranscript.length) setTranscript(existingTranscript);
 
         if (visit.soap_audit_trail?.grounding) setGrounding(visit.soap_audit_trail.grounding);
+        if (visit.soap_audit_trail?.coding) setCoding(visit.soap_audit_trail.coding);
 
         if (visit.anomalies?.length) setAnomalies(visit.anomalies);
         if (visit.differentials?.length) setDifferentials(visit.differentials);
@@ -363,6 +370,7 @@ export default function SessionPage() {
         if (Array.isArray(p.degraded_steps)) setDegradedSteps(p.degraded_steps);
         if (p.trajectory) setTrajectory(p.trajectory);
         if (p.grounding) setGrounding(p.grounding);
+        if (p.coding) setCoding(p.coding);
         return true;
       } catch {
         return false;
@@ -416,6 +424,7 @@ export default function SessionPage() {
       // Fresh run: clear any prior partial/failed state.
       setDegradedSteps([]);
       setGrounding(null);
+      setCoding(null);
       setPipelineStatus('running');
       try {
         const res = await apiFetch('/pipeline/run', {
@@ -765,6 +774,8 @@ export default function SessionPage() {
           />
 
           <ComplianceBadge compliance={compliance} />
+
+          <CodingPanel coding={coding} />
 
           {saveError && <p className="session-page__error">{saveError}</p>}
 

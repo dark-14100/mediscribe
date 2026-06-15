@@ -64,6 +64,35 @@ ICD10_PRIMARY_CARE: Final[dict[str, str]] = {
     "Z00.00": "Encounter for general adult medical examination without abnormal findings",
 }
 
+# --- CPT / E&M reference (coding.py prompt context) ---
+# Office-visit Evaluation & Management codes (the most common primary-care
+# billing decision) plus a few frequent procedures. Not exhaustive — anchors the
+# model and lets us fill descriptions for known codes.
+CPT_EM_REFERENCE: Final[dict[str, str]] = {
+    # Established patient office visit
+    "99211": "Established patient, minimal (may not require physician)",
+    "99212": "Established patient, straightforward complexity",
+    "99213": "Established patient, low complexity",
+    "99214": "Established patient, moderate complexity",
+    "99215": "Established patient, high complexity",
+    # New patient office visit
+    "99202": "New patient, straightforward complexity",
+    "99203": "New patient, low complexity",
+    "99204": "New patient, moderate complexity",
+    "99205": "New patient, high complexity",
+    # Common primary-care procedures
+    "93000": "Electrocardiogram, complete",
+    "36415": "Routine venipuncture (blood draw)",
+    "90471": "Immunization administration",
+    "94010": "Spirometry",
+}
+
+# Valid office-visit E&M codes per patient class (coding.py validation).
+EM_CODES_ESTABLISHED: Final[tuple[str, ...]] = (
+    "99211", "99212", "99213", "99214", "99215",
+)
+EM_CODES_NEW: Final[tuple[str, ...]] = ("99202", "99203", "99204", "99205")
+
 # --- HIPAA documentation checklist (compliance.py prompt context) ---
 HIPAA_DOCUMENTATION_CHECKLIST: Final[tuple[str, ...]] = (
     "Patient identifier present in note",
@@ -80,6 +109,7 @@ EVENT_ANOMALIES_READY: Final[str] = "anomalies_ready"
 EVENT_DIFFERENTIALS_READY: Final[str] = "differentials_ready"
 EVENT_DRIFT_READY: Final[str] = "drift_ready"
 EVENT_COMPLIANCE_READY: Final[str] = "compliance_ready"
+EVENT_CODING_READY: Final[str] = "coding_ready"
 EVENT_BIAS_READY: Final[str] = "bias_ready"
 EVENT_TRAJECTORY_READY: Final[str] = "trajectory_ready"
 EVENT_PIPELINE_DONE: Final[str] = "pipeline_done"
