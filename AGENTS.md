@@ -85,6 +85,12 @@ Notes:
 - Tests stub the AI services and use SQLite, so they don't need Groq or Postgres.
 - `eval/run.py` sets safe env defaults for replay so it runs with zero setup; `--live` needs `GROQ_API_KEY`.
 
+CI (`.github/workflows/ci.yml`) runs on every push to `main` and every PR:
+- **backend-tests** — full `pytest` against SQLite.
+- **eval-harness** — the replay-mode regression gate (fails the build if note quality
+  drops or any PHI leaks); uploads the scorecard as an artifact.
+- **frontend** — `npm ci` + lint + build.
+
 ## Conventions (follow these)
 
 - **Config:** ALL env access goes through `core/config.py` (`settings`). Never call
