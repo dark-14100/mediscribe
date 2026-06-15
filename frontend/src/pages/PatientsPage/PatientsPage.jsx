@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../lib/authContext.js';
 import AddPatientModal from '../../components/AddPatientModal/AddPatientModal';
@@ -28,34 +28,42 @@ export default function PatientsPage() {
   const [loading, setLoading] = useState(USE_API);
   const [loadError, setLoadError] = useState('');
 
-  const reloadPatients = useCallback(async () => {
-    if (!USE_API) return;
-    setLoading(true);
-    setLoadError('');
-    try {
-      const raw = await fetchPatients();
-      setPatients(mapPatientsToRows(raw));
-      setLoading(false);
-      try {
-        setPatients(await fetchPatientsWithSummary());
-      } catch (enrichErr) {
-        console.warn('[PatientsPage] enrich failed:', enrichErr);
-      }
-    } catch (err) {
-      if (err?.status === 401) {
-        signOut();
-        navigate('/login', { replace: true });
-        return;
-      }
-      setLoadError(await formatApiLoadError(err, 'Could not load patients. Try signing in again.'));
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
   useEffect(() => {
-    reloadPatients();
-  }, [reloadPatients]);
+    if (!USE_API) return undefined;
+    let cancelled = false;
+    // All state writes happen after an await so the effect never sets state
+    // synchronously (which would trigger cascading renders). `loading` is already
+    // initialised to true for API mode, so there's nothing to set up front.
+    (async () => {
+      try {
+        const raw = await fetchPatients();
+        if (cancelled) return;
+        setPatients(mapPatientsToRows(raw));
+        setLoading(false);
+        try {
+          const enriched = await fetchPatientsWithSummary();
+          if (!cancelled) setPatients(enriched);
+        } catch (enrichErr) {
+          console.warn('[PatientsPage] enrich failed:', enrichErr);
+        }
+      } catch (err) {
+        if (cancelled) return;
+        if (err?.status === 401) {
+          signOut();
+          navigate('/login', { replace: true });
+          return;
+        }
+        setLoadError(
+          await formatApiLoadError(err, 'Could not load patients. Try signing in again.'),
+        );
+        setLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function handleAddPatient(form) {
     if (USE_API) {

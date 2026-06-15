@@ -324,7 +324,11 @@ async def test_deid_strips_phi_before_llm_and_restores_in_output(
 ):
     """The SOAP generator must never see the patient's name; the persisted note
     must show it again (de-id before LLM, re-id after)."""
-    import services.soap_generator as soap_mod
+    # Patch the stub the route actually loads via importlib (sys.modules), NOT
+    # `import services.soap_generator` — the latter resolves to the real submodule
+    # through the `services` package attribute and would leave the route calling
+    # the fixture's default generator instead of our capture.
+    soap_mod = sys.modules["services.soap_generator"]
 
     captured: dict[str, str] = {}
 
