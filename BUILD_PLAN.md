@@ -2,7 +2,13 @@
 
 *How the product works today, what we're missing versus the market, and exactly what we're going to build on top of it — written so anyone can follow, with every bit of jargon explained.*
 
-Last updated: 2026-06-12 · Companion to the competitive analysis canvas.
+Last updated: 2026-06-15 · Companion to the competitive analysis canvas.
+
+> **Status (2026-06-15): Phase 1 (trust layer) is shipped.** Grounding gate
+> (rules + opt-in LLM verifier + enforce sign-off), de-identification, the
+> evaluation harness, and the degraded banner are all live and covered by CI.
+> Next up: **Phase 2 — get into the clinic** (EHR write-back + coding). See the
+> status markers (✅ / ◻️) in §5 and §7.
 
 ---
 
@@ -137,7 +143,8 @@ flowchart LR
 
 - **Cross-visit memory** (trajectory + drift + anomalies vs history). Most rivals forget the patient between visits.
 - **A panel of analyst agents** (not just a note writer).
-- **Evidence links** — the SOAP note already records which transcript lines each section came from (`source_lines`). This is the foundation for the "grounding gate" below.
+- **Evidence links** — the SOAP note records which transcript lines each section came from (`source_lines`).
+- **A built-in trust layer** (Phase 1, now live): PHI is de-identified before the LLM, every claim is grounded against the transcript (with an optional LLM second pass and an enforceable sign-off gate), and quality/hallucination/PHI-leak are measured by an evaluation harness in CI.
 - **A resilient pipeline** that degrades gracefully and logs PHI access.
 
 ---
@@ -146,17 +153,17 @@ flowchart LR
 
 Researched against the 2026 leaders (Nuance DAX Copilot, Abridge, Suki, Nabla, DeepScribe, Ambience, Glass Health).
 
-| Gap | What it means in plain English | Why it's critical |
-|---|---|---|
-| **EHR write-back** | We can't yet drop the finished note into Epic/Cerner. The doctor would have to copy-paste. | This is the #1 reason scribes get adopted or abandoned. No write-back = no real clinic use. |
-| **De-identification before AI** | We send the raw transcript (with names) to Groq. | The single most-cited HIPAA-AI best practice. Strip identifiers before they leave our walls. |
-| **Grounding gate** | No automatic check that the note matches what was actually said. | Patient safety + trust. A made-up symptom in a chart is dangerous. We already have the raw material (`source_lines`). |
-| **Automatic coding** | We don't suggest ICD-10/CPT billing codes. | Table stakes in 2026 and the direct way clinics make/save money. |
-| **Live transcription view** | Transcription happens in one batch, not word-by-word live. | Doctors expect to watch the note form in real time. |
-| **Multiple note types** | We only produce SOAP. | Rivals ship 6+ (H&P, progress note, discharge summary, etc.). |
-| **Accuracy benchmark** | No measured/published accuracy numbers. | Buyers ask "how accurate, how often does it hallucinate?" We need an answer. |
-| **Multilingual** | English-focused. | Competitors advertise 28–80+ languages. |
-| **Certifications** | No SOC 2 / HITRUST yet. | A hard gate for hospital procurement. |
+| Gap | What it means in plain English | Why it's critical | Status |
+|---|---|---|---|
+| **EHR write-back** | We can't yet drop the finished note into Epic/Cerner. The doctor would have to copy-paste. | This is the #1 reason scribes get adopted or abandoned. No write-back = no real clinic use. | ◻️ Next (Phase 2) |
+| **De-identification before AI** | We send the raw transcript (with names) to Groq. | The single most-cited HIPAA-AI best practice. Strip identifiers before they leave our walls. | ✅ Done |
+| **Grounding gate** | No automatic check that the note matches what was actually said. | Patient safety + trust. A made-up symptom in a chart is dangerous. We already have the raw material (`source_lines`). | ✅ Done |
+| **Automatic coding** | We don't suggest ICD-10/CPT billing codes. | Table stakes in 2026 and the direct way clinics make/save money. | ◻️ Next (Phase 2) |
+| **Live transcription view** | Transcription happens in one batch, not word-by-word live. | Doctors expect to watch the note form in real time. | ◻️ |
+| **Multiple note types** | We only produce SOAP. | Rivals ship 6+ (H&P, progress note, discharge summary, etc.). | ◻️ |
+| **Accuracy benchmark** | No measured/published accuracy numbers. | Buyers ask "how accurate, how often does it hallucinate?" We need an answer. | ✅ Done (eval harness) |
+| **Multilingual** | English-focused. | Competitors advertise 28–80+ languages. | ◻️ |
+| **Certifications** | No SOC 2 / HITRUST yet. | A hard gate for hospital procurement. | ◻️ |
 
 ---
 
@@ -164,14 +171,16 @@ Researched against the 2026 leaders (Nuance DAX Copilot, Abridge, Suki, Nabla, D
 
 Three phases. **Do them in order** — each unlocks the value of the next.
 
-### Phase 1 — Make the AI trustworthy *(build on top, no rewrites)*
+### Phase 1 — Make the AI trustworthy *(build on top, no rewrites)* — ✅ **SHIPPED**
 
 Goal: a doctor (and a hospital's lawyers) can trust the output. These are mostly backend additions that reuse what we already have.
 
-1. **Grounding gate** — after the SOAP note is written, verify each sentence traces back to a transcript line (we already store `source_lines`). Anything unverified gets flagged or held back, and we attach a confidence score.
-2. **De-identification layer** — strip patient identifiers from the transcript *before* it goes to Groq, then map them back afterward.
-3. **Evaluation harness** — a repeatable test that measures note accuracy and hallucination rate so we can publish real numbers.
-4. **Degraded banner (frontend)** — the backend already reports `degraded_steps`; show the doctor a clear "this note is partial" banner when it happens.
+1. ✅ **Grounding gate** — after the SOAP note is written, verify each sentence traces back to a transcript line (we already store `source_lines`). Anything unverified gets flagged, with a confidence score. Delivered in three phases: **A** rules-based lexical check, **B** opt-in LLM verifier (`GROUNDING_USE_LLM`, downgrade-only, resilient), **C** `enforce` mode that blocks sign-off on unverified claims without an auditable acknowledgement (`GROUNDING_MODE`).
+2. ✅ **De-identification layer** — strip patient identifiers from the transcript *before* it goes to Groq, then map them back afterward (`DEID_MODE`, rules-based; optional NER is a later add-on). Only a PHI-free report is persisted.
+3. ✅ **Evaluation harness** — a repeatable, dependency-free test (`backend/eval/`) measuring note quality (token-F1 + ROUGE-L), hallucination rate (via the grounding gate), and PHI-leak rate (via de-id). Runs as a **CI regression gate**.
+4. ✅ **Degraded banner (frontend)** — the backend reports `degraded_steps`; the doctor sees a clear "this note is partial" banner when a step degrades.
+
+*Defaults are safe:* the LLM verifier is **off**, grounding mode is **warn** (informs, never blocks), and de-id is **on** in fail-open mode. Flip `GROUNDING_USE_LLM=true` / `GROUNDING_MODE=enforce` to activate the stricter behaviour.
 
 ```mermaid
 flowchart LR
@@ -236,19 +245,19 @@ The core pipeline (our moat) stays exactly as-is. We're **wrapping** it with a t
 
 ## 7. Roadmap at a glance
 
-| Phase | Item | Effort | Depends on |
-|---|---|---|---|
-| 1 | Grounding gate | Medium | reuses `source_lines` |
-| 1 | De-identification before Groq | Medium | — |
-| 1 | Evaluation harness | Medium | — |
-| 1 | Degraded banner (frontend) | Low | backend already emits `degraded_steps` |
-| 2 | FHIR DocumentReference write-back | High | Epic sandbox access |
-| 2 | Coding agent (ICD-10 / CPT / E&M) | Medium | grounding gate (Phase 1) |
-| 2 | Multiple note types | Medium | — |
-| 2 | Live transcription view | Medium | streaming ASR |
-| 3 | Multilingual | Medium | — |
-| 3 | Multi-model orchestration + fallback | Low–Med | — |
-| 3 | SOC 2 / HITRUST + consent | Operational | — |
+| Phase | Item | Status | Effort | Depends on |
+|---|---|---|---|---|
+| 1 | Grounding gate (rules + LLM verifier + enforce) | ✅ Done | Medium | reuses `source_lines` |
+| 1 | De-identification before Groq | ✅ Done (rules; NER optional later) | Medium | — |
+| 1 | Evaluation harness | ✅ Done (+ CI gate) | Medium | — |
+| 1 | Degraded banner (frontend) | ✅ Done | Low | backend emits `degraded_steps` |
+| 2 | FHIR DocumentReference write-back | ◻️ Next | High | Epic sandbox access |
+| 2 | Coding agent (ICD-10 / CPT / E&M) | ◻️ Next | Medium | grounding gate (Phase 1) ✅ |
+| 2 | Multiple note types | ◻️ | Medium | — |
+| 2 | Live transcription view | ◻️ | Medium | streaming ASR |
+| 3 | Multilingual | ◻️ | Medium | — |
+| 3 | Multi-model orchestration + fallback | ◻️ | Low–Med | — |
+| 3 | SOC 2 / HITRUST + consent | ◻️ | Operational | — |
 
 ---
 
@@ -262,7 +271,9 @@ The core pipeline (our moat) stays exactly as-is. We're **wrapping** it with a t
 
 ---
 
-## 9. Suggested first step
+## 9. Where we are & the next step
 
-The highest-leverage, self-contained starting point is the **grounding gate** — it's pure backend, builds directly on the `source_lines` we already capture, and is what makes everything else (especially coding) trustworthy. A close second is the **de-identification layer** (a contained privacy win). Either can be specced and implemented without touching the existing pipeline's core logic.
+**Phase 1 (trust) is complete and in CI.** The pipeline now de-identifies before the LLM, grounds every claim (rules + opt-in LLM verifier), can enforce acknowledgement at sign-off, and is measured end-to-end by the evaluation harness.
+
+The next highest-leverage move is **Phase 2 — get into the clinic**, starting with the **coding agent** (ICD-10 / CPT / E&M): it's a self-contained new pipeline step, it now rests on the trustworthy grounded note, and it's the direct path to clinic revenue. **EHR write-back** (FHIR `DocumentReference` via SMART on FHIR) is the adoption unlock but depends on Epic sandbox access, so it can proceed in parallel once that access is secured.
 ```
