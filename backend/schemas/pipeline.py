@@ -310,6 +310,12 @@ class AudioUrlResponse(BaseModel):
     expires_in: int
 
 
+class PartialTranscriptResponse(BaseModel):
+    """Near-live preview: the diarization-free text of the audio so far."""
+
+    text: str = ""
+
+
 class PipelineRunRequest(BaseModel):
     visit_id: uuid.UUID
     transcript: list[TranscriptLine] = Field(

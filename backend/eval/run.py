@@ -32,7 +32,6 @@ from .metrics import hallucination_rate, phi_leak_rate, rouge_l, semantic_sim, t
 from .report import build_report, print_table, write_reports  # noqa: E402
 from .thresholds import Thresholds  # noqa: E402
 
-SOAP_KEYS = ("subjective", "objective", "assessment", "plan")
 _EVAL_DIR = Path(__file__).resolve().parent
 
 
@@ -55,17 +54,34 @@ def _mean(values: list[float]) -> float:
     return sum(values) / len(values) if values else 1.0
 
 
-async def _generated_soap(case: dict, live: bool) -> dict:
-    """Return the SOAP note to score: from Groq (live) or the stored fixture."""
-    if live:
-        from services.soap_generator import generate_soap  # local import
+def _case_note_type(case: dict) -> str:
+    from core.note_templates import normalize_note_type
 
-        return await generate_soap(case.get("transcript", []))
-    fixture = case.get("generated_soap")
+    return normalize_note_type(case.get("note_type"))
+
+
+async def _generated_note(case: dict, live: bool) -> dict:
+    """Return the note to score: from Groq (live) or the stored fixture.
+
+    Notes persist as a flat ``{section: {text, source_lines}}`` dict regardless of
+    note type. SOAP cases keep using ``generated_soap``; other types use
+    ``generated_note`` (falling back to ``generated_soap`` for back-compat).
+    """
+    note_type = _case_note_type(case)
+    if live:
+        if note_type == "soap":
+            from services.soap_generator import generate_soap  # local import
+
+            return await generate_soap(case.get("transcript", []))
+        from services.soap_generator import generate_note  # local import
+
+        return await generate_note(case.get("transcript", []), note_type)
+
+    fixture = case.get("generated_note") or case.get("generated_soap")
     if not fixture:
         raise SystemExit(
-            f"case '{case.get('id')}' has no 'generated_soap' fixture; "
-            f"run with --live --save-fixtures to record one"
+            f"case '{case.get('id')}' has no 'generated_note'/'generated_soap' "
+            f"fixture; run with --live --save-fixtures to record one"
         )
     return fixture
 
@@ -81,17 +97,22 @@ def _residual_after_roundtrip(generated: dict, transcript: list, patient) -> int
 
 
 async def _score_case(case: dict, *, live: bool, semantic: bool) -> dict:
+    from core.note_templates import section_keys
+
     transcript = case.get("transcript", [])
-    reference = case.get("reference_soap", {}) or {}
+    note_type = _case_note_type(case)
+    # reference_note (per-section) takes precedence; reference_soap kept for back-compat.
+    reference = case.get("reference_note") or case.get("reference_soap", {}) or {}
     planted = case.get("planted_phi", []) or []
     patient = SimpleNamespace(**(case.get("patient") or {}))
 
-    generated = await _generated_soap(case, live)
+    generated = await _generated_note(case, live)
 
+    keys = section_keys(note_type)
     f1s: list[float] = []
     rouges: list[float] = []
     sems: list[float] = []
-    for key in SOAP_KEYS:
+    for key in keys:
         ref_text = str(reference.get(key, "") or "")
         if not ref_text.strip():
             continue
@@ -105,14 +126,15 @@ async def _score_case(case: dict, *, live: bool, semantic: bool) -> dict:
         "id": case.get("id", "<unnamed>"),
         "token_f1": _mean(f1s),
         "rouge_l": _mean(rouges),
-        "hallucination_rate": await hallucination_rate(generated, transcript),
+        "hallucination_rate": await hallucination_rate(generated, transcript, note_type),
         "phi_leak_rate": phi_leak_rate(transcript, patient, planted),
         "residual_placeholders": _residual_after_roundtrip(generated, transcript, patient),
     }
     if semantic:
         scored["semantic_sim"] = _mean(sems)
     if live:
-        scored["_generated_soap"] = generated  # carried for --save-fixtures
+        scored["_note_type"] = note_type
+        scored["_generated_note"] = generated  # carried for --save-fixtures
     return scored
 
 
@@ -138,16 +160,21 @@ async def evaluate(
 
 def _save_fixtures(dataset: Path, scored: list[dict]) -> None:
     cases = _load_dataset(dataset)
-    by_id = {c["id"]: c.get("_generated_soap") for c in scored}
+    by_id = {
+        c["id"]: (c.get("_note_type", "soap"), c.get("_generated_note"))
+        for c in scored
+    }
     for case in cases:
-        soap = by_id.get(case.get("id"))
-        if soap is not None:
-            case["generated_soap"] = soap
+        note_type, note = by_id.get(case.get("id"), ("soap", None))
+        if note is not None:
+            # SOAP keeps the legacy fixture key; other types use generated_note.
+            key = "generated_soap" if note_type == "soap" else "generated_note"
+            case[key] = note
     dataset.write_text(
         "\n".join(json.dumps(c, ensure_ascii=False) for c in cases) + "\n",
         encoding="utf-8",
     )
-    print(f"  Saved {sum(1 for v in by_id.values() if v)} fixtures to {dataset}")
+    print(f"  Saved {sum(1 for _, n in by_id.values() if n)} fixtures to {dataset}")
 
 
 def main(argv: list[str] | None = None) -> int:

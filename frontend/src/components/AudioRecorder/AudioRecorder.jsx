@@ -21,12 +21,22 @@ const STATUS_LABEL = {
  * Props:
  *   visitId            – UUID of the current visit (required for real API calls)
  *   onTranscriptReady  – called with the transcript array once transcription succeeds
+ *   onPartialTranscript – called with a plain-text preview while still recording
  *   disabled           – blocks starting a new recording (e.g. while pipeline runs)
  */
 const METER_BARS = 7;
 const ZERO_LEVELS = Array(METER_BARS).fill(0);
+// How often to re-transcribe the cumulative audio for the near-live preview.
+// Whisper is batch-only, so each poll re-sends the growing blob; keep it spaced
+// out to bound cost while still feeling responsive.
+const PARTIAL_POLL_MS = 6000;
 
-export default function AudioRecorder({ visitId, onTranscriptReady, disabled = false }) {
+export default function AudioRecorder({
+  visitId,
+  onTranscriptReady,
+  onPartialTranscript,
+  disabled = false,
+}) {
   const [status, setStatus] = useState('idle');
   const [elapsed, setElapsed] = useState(0);
   const [errorMessage, setErrorMessage] = useState('');
@@ -39,6 +49,9 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
   const audioCtxRef = useRef(null);
   const analyserRef = useRef(null);
   const rafRef = useRef(null);
+  const mimeTypeRef = useRef('audio/webm');
+  const partialIntervalRef = useRef(null);
+  const partialBusyRef = useRef(false);
 
   const isRecording = status === 'recording';
   const isBusy = status === 'transcribing';
@@ -58,8 +71,53 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
     return () => {
       streamRef.current?.getTracks().forEach((t) => t.stop());
       stopMeter();
+      stopPartialPolling();
     };
   }, []);
+
+  function partialEnabled() {
+    return Boolean(import.meta.env.VITE_API_URL) && !isDemoVisitId(visitId);
+  }
+
+  async function pollPartial() {
+    if (partialBusyRef.current) return;
+    const chunks = chunksRef.current;
+    if (!chunks.length) return;
+    const blob = new Blob(chunks, { type: mimeTypeRef.current });
+    // Skip until there's enough audio to decode meaningfully.
+    if (blob.size < 8000) return;
+
+    partialBusyRef.current = true;
+    try {
+      const form = new FormData();
+      form.append('audio', blob, 'partial.webm');
+      const response = await apiFetch('/pipeline/transcribe-chunk', {
+        method: 'POST',
+        body: form,
+      });
+      const data = await response.json();
+      const text = (data?.text ?? '').trim();
+      if (text) onPartialTranscript?.(text);
+    } catch (err) {
+      // Preview is best-effort; never disrupt the recording on failure.
+      console.warn('[AudioRecorder] partial transcription failed:', err);
+    } finally {
+      partialBusyRef.current = false;
+    }
+  }
+
+  function startPartialPolling() {
+    if (!partialEnabled() || partialIntervalRef.current) return;
+    partialIntervalRef.current = setInterval(pollPartial, PARTIAL_POLL_MS);
+  }
+
+  function stopPartialPolling() {
+    if (partialIntervalRef.current) {
+      clearInterval(partialIntervalRef.current);
+      partialIntervalRef.current = null;
+    }
+    partialBusyRef.current = false;
+  }
 
   function startMeter(stream) {
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -116,6 +174,7 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : 'audio/webm';
+      mimeTypeRef.current = mimeType;
 
       const recorder = new MediaRecorder(stream, { mimeType });
       mediaRecorderRef.current = recorder;
@@ -127,11 +186,13 @@ export default function AudioRecorder({ visitId, onTranscriptReady, disabled = f
       recorder.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         stopMeter();
+        stopPartialPolling();
         handleTranscribe(chunksRef.current, mimeType);
       };
 
       recorder.start(250); // collect chunks every 250 ms
       startMeter(stream);
+      startPartialPolling();
       setElapsed(0);
       setStatus('recording');
     } catch (err) {

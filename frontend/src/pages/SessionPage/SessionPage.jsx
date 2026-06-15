@@ -138,6 +138,7 @@ export default function SessionPage() {
   const [transcriptError, setTranscriptError] = useState(null);
 
   const [transcript, setTranscript] = useState([]);
+  const [liveTranscript, setLiveTranscript] = useState('');
   const [noteType, setNoteType] = useState('soap');
   const [soap, setSoap] = useState(() => emptyNote('soap'));
   const [visibleFields, setVisibleFields] = useState(() => new Set());
@@ -486,11 +487,16 @@ export default function SessionPage() {
         return;
       }
 
+      setLiveTranscript('');
       setTranscript(transcript);
       await runPipeline(transcript);
     },
     [useRealApi, runPipeline],
   );
+
+  const handlePartialTranscript = useCallback((text) => {
+    setLiveTranscript(text || '');
+  }, []);
 
   const handleRetryPipeline = useCallback(() => {
     if (!transcript.length) return;
@@ -751,8 +757,16 @@ export default function SessionPage() {
           <AudioRecorder
             visitId={visitId}
             onTranscriptReady={handleTranscriptReady}
+            onPartialTranscript={handlePartialTranscript}
             disabled={recorderDisabled || sessionLoading || !patient}
           />
+
+          {liveTranscript && !transcript.length ? (
+            <div className="session-page__live-transcript" aria-live="polite">
+              <span className="session-page__live-transcript-tag">Live preview</span>
+              <p className="session-page__live-transcript-text">{liveTranscript}</p>
+            </div>
+          ) : null}
 
           {transcriptError ? (
             <p className="session-page__error" role="alert">

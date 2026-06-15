@@ -150,12 +150,14 @@ async def _format_transcript(segments: list[dict]) -> list[dict[str, str | int]]
 # Groq Whisper call
 # ---------------------------------------------------------------------------
 
-async def _call_groq_whisper(
+async def _whisper_segments(
     audio_bytes: bytes,
     *,
     filename: str = "audio.webm",
     content_type: str = "audio/webm",
-) -> list[dict[str, str | int]]:
+    timeout: float = 120.0,
+) -> list[dict]:
+    """Run Groq Whisper on raw bytes and return its raw (undiarized) segments."""
     temp_dir: str | None = None
     try:
         suffix = Path(filename).suffix or ".webm"
@@ -174,7 +176,7 @@ async def _call_groq_whisper(
                             "model": GROQ_WHISPER_MODEL,
                             "response_format": "verbose_json",
                         },
-                        timeout=120.0,
+                        timeout=timeout,
                     )
             if response.status_code != 200:
                 logger.error(
@@ -186,24 +188,34 @@ async def _call_groq_whisper(
             return response
 
         response = await call_with_retries(_request, label="whisper")
-
         payload = response.json()
         segments: list[dict] = payload.get("segments") or []
         if not segments:
             full_text = (payload.get("text") or "").strip()
             if full_text:
                 segments = [{"text": full_text}]
-            else:
-                raise ValueError("Groq returned no transcription segments")
-
-        transcript = await _format_transcript(segments)
-        if not transcript:
-            raise ValueError("No non-empty transcription segments")
-        return transcript
-
+        return segments
     finally:
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+async def _call_groq_whisper(
+    audio_bytes: bytes,
+    *,
+    filename: str = "audio.webm",
+    content_type: str = "audio/webm",
+) -> list[dict[str, str | int]]:
+    segments = await _whisper_segments(
+        audio_bytes, filename=filename, content_type=content_type
+    )
+    if not segments:
+        raise ValueError("Groq returned no transcription segments")
+
+    transcript = await _format_transcript(segments)
+    if not transcript:
+        raise ValueError("No non-empty transcription segments")
+    return transcript
 
 
 # ---------------------------------------------------------------------------
@@ -225,6 +237,26 @@ async def transcribe(audio_bytes: bytes) -> list[dict[str, str | int]]:
     except Exception:
         logger.exception("[TRANSCRIPTION] Transcription failed")
         raise
+
+
+async def transcribe_partial(audio_bytes: bytes) -> str:
+    """Fast, diarization-free transcription for the live preview.
+
+    Returns the plain joined text of the audio so far (no speaker labels, no
+    LLaMA call). Used by the near-live chunk endpoint while the doctor is still
+    recording; the authoritative diarized transcript is produced by ``transcribe``
+    on the final blob. Returns "" rather than raising on empty/failed audio so a
+    dropped preview never disrupts recording.
+    """
+    if not audio_bytes:
+        return ""
+    try:
+        segments = await _whisper_segments(audio_bytes, timeout=45.0)
+    except Exception:
+        logger.warning("[TRANSCRIPTION] partial transcription failed", exc_info=True)
+        return ""
+    parts = [(seg.get("text") or "").strip() for seg in segments]
+    return " ".join(p for p in parts if p).strip()
 
 
 async def transcribe_audio(file: UploadFile) -> dict:

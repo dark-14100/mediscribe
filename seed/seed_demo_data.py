@@ -74,6 +74,17 @@ DEMO_PATIENT_MEDS = [
     "atorvastatin 20 mg nightly",
 ]
 
+# A second demo patient that showcases the non-SOAP note types (H&P, progress,
+# discharge) so the note-type selector has real example data in the UI.
+SHOWCASE_PATIENT_NAME = "James Carter"
+SHOWCASE_PATIENT_DOB = date(1958, 9, 2)
+SHOWCASE_PATIENT_GENDER = "male"
+SHOWCASE_PATIENT_ALLERGIES = ["sulfa drugs"]
+SHOWCASE_PATIENT_MEDS = [
+    "aspirin 81 mg daily",
+    "metoprolol 25 mg twice daily",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers to build SOAP / drift / anomaly / compliance / bias payloads
@@ -93,6 +104,18 @@ def _soap(
         "objective": {"text": objective, "source_lines": [4, 5, 6]},
         "assessment": {"text": assessment, "source_lines": [7, 8, 9]},
         "plan": {"text": plan, "source_lines": [10, 11, source_lines]},
+    }
+
+
+def _note(sections: dict[str, str]) -> dict:
+    """Build a flat {section_key: {text, source_lines}} note for any note type.
+
+    Mirrors how the pipeline persists non-SOAP notes (see ``Visit.soap_note``).
+    Source lines are illustrative so the grounding panel has something to anchor.
+    """
+    return {
+        key: {"text": text, "source_lines": [1, 2, 3]}
+        for key, text in sections.items()
     }
 
 
@@ -596,6 +619,158 @@ def _build_visits(patient_id: uuid.UUID, doctor_id: uuid.UUID) -> list[Visit]:
     return visits
 
 
+def _build_note_type_showcase_visits(
+    patient_id: uuid.UUID, doctor_id: uuid.UUID
+) -> list[Visit]:
+    """Three signed visits, one per non-SOAP note type, for the second patient.
+
+    These exist so the note-type selector and the generic editor have real
+    example notes to render. They carry no analyst signals (defaults) — they're
+    purely about demonstrating the H&P / progress / discharge templates.
+    """
+    base = datetime.now(timezone.utc) - timedelta(days=45)
+    visits: list[Visit] = []
+
+    # --- History & Physical (day 0) ---------------------------------------
+    visits.append(
+        Visit(
+            id=uuid.uuid4(),
+            patient_id=patient_id,
+            doctor_id=doctor_id,
+            visit_date=base + timedelta(days=0),
+            note_type="hp",
+            raw_transcript=(
+                "doctor: What brings you in today?\n"
+                "patient: I've had chest tightness when I walk uphill for two weeks.\n"
+                "doctor: Any history of heart disease?\n"
+                "patient: My father had a heart attack at sixty. I take a baby aspirin."
+            ),
+            soap_note=_note(
+                {
+                    "chief_complaint": "Exertional chest tightness for two weeks.",
+                    "hpi": (
+                        "58-year-old man with two weeks of substernal chest "
+                        "tightness on exertion (walking uphill), relieved by rest, "
+                        "lasting a few minutes. No radiation, diaphoresis, or "
+                        "dyspnea at rest. No prior episodes."
+                    ),
+                    "pmh": (
+                        "Hypertension. Father with MI at age 60. Former smoker "
+                        "(quit 10 years ago). No prior cardiac workup."
+                    ),
+                    "ros": (
+                        "Positive for exertional chest tightness. Denies palpitations, "
+                        "orthopnea, edema, fever, or cough."
+                    ),
+                    "exam": (
+                        "BP 142/88, HR 78, RR 16, SpO2 98%. Heart regular rhythm, no "
+                        "murmurs. Lungs clear. No peripheral edema."
+                    ),
+                    "assessment": (
+                        "Stable exertional angina, suspected coronary artery disease "
+                        "(I20.8). Hypertension (I10), suboptimally controlled."
+                    ),
+                    "plan": (
+                        "Start low-dose beta-blocker. Order ECG, lipid panel, and "
+                        "stress test. Continue aspirin. Cardiology referral. Return "
+                        "in two weeks or sooner for worsening symptoms."
+                    ),
+                }
+            ),
+            compliance_status="compliant",
+            is_signed=True,
+            signed_at=base + timedelta(days=0, hours=1),
+        )
+    )
+
+    # --- Progress note (day 21) -------------------------------------------
+    visits.append(
+        Visit(
+            id=uuid.uuid4(),
+            patient_id=patient_id,
+            doctor_id=doctor_id,
+            visit_date=base + timedelta(days=21),
+            note_type="progress",
+            raw_transcript=(
+                "doctor: How has the chest tightness been on the beta-blocker?\n"
+                "patient: Much better. I can walk uphill now without stopping.\n"
+                "doctor: Good. Your stress test was reassuring."
+            ),
+            soap_note=_note(
+                {
+                    "interval_history": (
+                        "Returns two weeks after starting metoprolol. Exertional "
+                        "chest tightness markedly improved; tolerating uphill walking "
+                        "without symptoms. Adherent to medications, no side effects."
+                    ),
+                    "exam": (
+                        "BP 128/80, HR 64, RR 14, SpO2 99%. Heart regular, no murmurs. "
+                        "Lungs clear."
+                    ),
+                    "assessment": (
+                        "Exertional angina (I20.8), improved on beta-blockade. "
+                        "Hypertension (I10), now at goal. Stress test without "
+                        "high-risk features."
+                    ),
+                    "plan": (
+                        "Continue metoprolol and aspirin. Reinforce statin adherence. "
+                        "Routine cardiology follow-up. Return in three months."
+                    ),
+                }
+            ),
+            compliance_status="compliant",
+            is_signed=True,
+            signed_at=base + timedelta(days=21, hours=1),
+        )
+    )
+
+    # --- Discharge summary (day 40) ---------------------------------------
+    visits.append(
+        Visit(
+            id=uuid.uuid4(),
+            patient_id=patient_id,
+            doctor_id=doctor_id,
+            visit_date=base + timedelta(days=40),
+            note_type="discharge",
+            raw_transcript=(
+                "doctor: You're being discharged after the observation stay.\n"
+                "patient: Thank you. What do I need to watch for at home?\n"
+                "doctor: Call us for any chest pain that doesn't ease with rest."
+            ),
+            soap_note=_note(
+                {
+                    "admission_dx": "Unstable angina, rule out acute coronary syndrome.",
+                    "discharge_dx": (
+                        "Non-ST-elevation myocardial infarction (I21.4), now stable. "
+                        "Coronary artery disease (I25.10). Hypertension (I10)."
+                    ),
+                    "hospital_course": (
+                        "Admitted for chest pain with troponin elevation. Cardiac "
+                        "catheterization showed a 70% LAD stenosis; drug-eluting stent "
+                        "placed without complication. Monitored on telemetry; remained "
+                        "chest-pain free. Echocardiogram showed preserved EF."
+                    ),
+                    "discharge_meds": (
+                        "Aspirin 81 mg daily, clopidogrel 75 mg daily, "
+                        "atorvastatin 80 mg nightly, metoprolol 50 mg twice daily, "
+                        "lisinopril 10 mg daily."
+                    ),
+                    "followup": (
+                        "Cardiology in one week. Primary care in two weeks. Cardiac "
+                        "rehab referral placed. Return immediately for chest pain "
+                        "unrelieved by rest, shortness of breath, or fainting."
+                    ),
+                }
+            ),
+            compliance_status="compliant",
+            is_signed=True,
+            signed_at=base + timedelta(days=40, hours=2),
+        )
+    )
+
+    return visits
+
+
 # ---------------------------------------------------------------------------
 # Public entry point — callable from the CLI and from tests
 # ---------------------------------------------------------------------------
@@ -647,12 +822,43 @@ async def seed() -> dict:
         await session.flush()
         log.info("created demo patient id=%s name=%s", patient.id, patient.full_name)
 
+        # 3b. Create the note-type showcase patient (H&P / progress / discharge).
+        showcase_patient = Patient(
+            id=uuid.uuid4(),
+            full_name=SHOWCASE_PATIENT_NAME,
+            dob=SHOWCASE_PATIENT_DOB,
+            gender=SHOWCASE_PATIENT_GENDER,
+            doctor_id=doctor.id,
+            allergies=SHOWCASE_PATIENT_ALLERGIES,
+            active_medications=SHOWCASE_PATIENT_MEDS,
+        )
+        session.add(showcase_patient)
+        await session.flush()
+        log.info(
+            "created showcase patient id=%s name=%s",
+            showcase_patient.id,
+            showcase_patient.full_name,
+        )
+
         # 4. Insert the 6 scripted visits.
         visits = _build_visits(patient_id=patient.id, doctor_id=doctor.id)
         for v in visits:
             session.add(v)
+
+        # 4b. Insert the non-SOAP showcase visits.
+        showcase_visits = _build_note_type_showcase_visits(
+            patient_id=showcase_patient.id, doctor_id=doctor.id
+        )
+        for v in showcase_visits:
+            session.add(v)
+
         await session.commit()
-        log.info("inserted %d visits", len(visits))
+        log.info(
+            "inserted %d visits (%d SOAP + %d note-type showcase)",
+            len(visits) + len(showcase_visits),
+            len(visits),
+            len(showcase_visits),
+        )
 
         # 5. Sanity check: run the rule-based trajectory engine and confirm
         #    it independently agrees that the patient is declining.
@@ -682,6 +888,8 @@ async def seed() -> dict:
             "doctor_password": DEMO_PASSWORD,
             "patient_id": str(patient.id),
             "visit_ids": [str(v.id) for v in visits],
+            "showcase_patient_id": str(showcase_patient.id),
+            "showcase_visit_ids": [str(v.id) for v in showcase_visits],
             "trajectory": (
                 trajectory.model_dump() if trajectory is not None else None
             ),

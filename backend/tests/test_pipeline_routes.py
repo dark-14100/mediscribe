@@ -254,6 +254,70 @@ async def test_transcribe_rejects_unsupported_content_type(client, doctor_user):
     assert resp.status_code == 415
 
 
+# ---------------------------------------------------------------------------
+# /pipeline/transcribe-chunk (near-live preview)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_transcribe_chunk_returns_partial_text(client, doctor_user, monkeypatch):
+    import services.transcription as _trans_mod
+
+    async def fake_partial(audio_bytes: bytes) -> str:
+        return "live preview text"
+
+    monkeypatch.setattr(_trans_mod, "transcribe_partial", fake_partial, raising=False)
+    resp = await client.post(
+        "/pipeline/transcribe-chunk",
+        headers=auth_header(doctor_user),
+        files={"audio": ("partial.webm", b"raw-bytes-cumulative", "audio/webm")},
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["text"] == "live preview text"
+
+
+@pytest.mark.asyncio
+async def test_transcribe_chunk_degrades_to_empty_on_empty_audio(client, doctor_user):
+    resp = await client.post(
+        "/pipeline/transcribe-chunk",
+        headers=auth_header(doctor_user),
+        files={"audio": ("partial.webm", b"", "audio/webm")},
+    )
+    # Best-effort preview: empty audio is not an error, just an empty preview.
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_transcribe_chunk_degrades_when_service_fails(
+    client, doctor_user, monkeypatch
+):
+    import services.transcription as _trans_mod
+
+    async def boom(audio_bytes: bytes) -> str:
+        raise RuntimeError("provider down")
+
+    monkeypatch.setattr(_trans_mod, "transcribe_partial", boom, raising=False)
+    resp = await client.post(
+        "/pipeline/transcribe-chunk",
+        headers=auth_header(doctor_user),
+        files={"audio": ("partial.webm", b"raw-bytes", "audio/webm")},
+    )
+    # A failed preview must never surface as an error to the recorder.
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["text"] == ""
+
+
+@pytest.mark.asyncio
+async def test_transcribe_chunk_rejects_unsupported_content_type(client, doctor_user):
+    resp = await client.post(
+        "/pipeline/transcribe-chunk",
+        headers=auth_header(doctor_user),
+        files={"audio": ("clip.txt", b"not audio", "text/plain")},
+    )
+    assert resp.status_code == 415
+
+
 @pytest.mark.asyncio
 async def test_audio_url_returns_signed_link_after_transcribe(
     client, doctor_user, ai_services_installed

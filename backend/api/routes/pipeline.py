@@ -60,6 +60,7 @@ from schemas.pipeline import (
     CodingResult,
     DeidReport,
     GroundingResult,
+    PartialTranscriptResponse,
     PipelinePayload,
     PipelineRunRequest,
     SOAPNote,
@@ -339,6 +340,53 @@ async def transcribe(
         transcript=_serialise(transcript) or [],
         audio_upload_queued=audio_upload_queued,
     )
+
+
+@router.post("/transcribe-chunk", response_model=PartialTranscriptResponse)
+@limiter.limit(settings.RATE_LIMIT_PIPELINE)
+async def transcribe_chunk(
+    request: Request,
+    user: Annotated[User, Depends(require_doctor)],
+    audio: UploadFile = File(...),
+) -> PartialTranscriptResponse:
+    """Near-live preview transcription.
+
+    Accepts the cumulative audio captured so far while the doctor is still
+    recording and returns its plain text (no diarization, no storage). This is a
+    best-effort convenience so the transcript appears to form in real time; the
+    authoritative diarized transcript is still produced by ``/transcribe`` on the
+    final blob. Any failure degrades to an empty preview rather than an error so
+    it never disrupts an in-progress recording.
+    """
+    content_type = (audio.content_type or "").split(";")[0].strip().lower()
+    if content_type and not _is_allowed_audio_type(content_type):
+        raise HTTPException(
+            status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported audio format",
+        )
+
+    audio_bytes = await audio.read()
+    if not audio_bytes:
+        return PartialTranscriptResponse(text="")
+    if len(audio_bytes) > settings.MAX_AUDIO_UPLOAD_BYTES:
+        raise HTTPException(
+            status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Audio upload exceeds the maximum allowed size.",
+        )
+
+    if not settings.GROQ_API_KEY:
+        return PartialTranscriptResponse(text="")
+
+    partial_fn = _resolve("services.transcription", "transcribe_partial")
+    if partial_fn is None:
+        return PartialTranscriptResponse(text="")
+    try:
+        text = await partial_fn(audio_bytes)
+    except Exception:  # noqa: BLE001
+        log.warning("[pipeline] partial transcription failed", exc_info=True)
+        return PartialTranscriptResponse(text="")
+
+    return PartialTranscriptResponse(text=text or "")
 
 
 # ---------------------------------------------------------------------------

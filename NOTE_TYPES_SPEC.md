@@ -147,7 +147,7 @@ flowchart LR
 |---|---|---|---|
 | **A** ✅ shipped | Template registry + `ClinicalNote` schema & adapters + `generate_note` + `visit.note_type` (migration `002`) + frontend selector & generic editor + grounding generalised + **SOAP unchanged**. New types render/generate/ground/store/display. | Medium–High | Medium (touches core schema) |
 | **B** ✅ shipped | Per-template **coding + compliance** mappings so the trust agents read the real note sections (not the SOAP projection). | Medium | Low |
-| **C** | Seed/eval/demo data per type; polish prompts per type; docs. | Low–Med | Low |
+| **C** ✅ shipped | Seed/eval/demo data per type; note-type-aware eval harness; docs. | Low–Med | Low |
 
 ### As-built notes (Phase A)
 
@@ -161,6 +161,11 @@ flowchart LR
 - **Compliance** (`services/compliance.py`): `check` accepts a `ClinicalNote`. The SOAP path keeps the exact original `SYSTEM_PROMPT` + user message (so the HIPAA-prompt test still holds); other types get a generic prompt that lists their own sections and uses the dx/disposition section labels.
 - **Pipeline + save**: both now pass the real `clinical_note` to coding and compliance (the SOAP projection is still used only for the *other* analyst agents — differential/anomaly/bias/history/embedding, which remain projection-based).
 - **Still projection-based** (future work): differential, anomaly, bias, history retrieval, and embeddings read the SOAP projection.
+
+### As-built notes (Phase C)
+
+- **Demo data** (`seed/seed_demo_data.py`): a second demo patient ("James Carter") now carries three signed visits — an **H&P**, a **Progress note**, and a **Discharge summary** — so the note-type selector and generic editor have real example notes in the UI. A new `_note()` helper builds the flat `{section: {text, source_lines}}` body for any type; the original SOAP patient (Maria Hernandez) and her trajectory are untouched.
+- **Eval harness is note-type-aware** (`backend/eval/run.py`, `metrics.py`): cases may set `note_type` (default `soap`) and provide a `reference_note` + `generated_note` keyed by the template's section keys. Scoring, the replay fixture key, and `hallucination_rate` (which wraps non-SOAP notes in a `ClinicalNote` for grounding) all follow the template. SOAP cases keep `reference_soap`/`generated_soap` and score byte-for-byte as before. `smoke.jsonl` gains an H&P case (`angina-hp-06`).
 
 Phase A is the bulk; B/C harden the trust layer for the new types and round out fixtures.
 

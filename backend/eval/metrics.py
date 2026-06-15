@@ -99,27 +99,42 @@ def semantic_sim(pred: str, ref: str) -> float:
 # --- Trust ---------------------------------------------------------------
 
 
-def _count_sentences(soap: dict[str, Any]) -> int:
-    """Total verifiable sentences across SOAP fields (matches grounding's split)."""
+def _count_sentences(note: dict[str, Any], keys: tuple[str, ...]) -> int:
+    """Total verifiable sentences across the note's sections (grounding's split)."""
     total = 0
-    for key in ("subjective", "objective", "assessment", "plan"):
-        field = soap.get(key) or {}
+    for key in keys:
+        field = note.get(key) or {}
         text = str(field.get("text", "") or "")
         total += sum(1 for s in _SENTENCE_RE.findall(text) if s.strip())
     return total
 
 
-async def hallucination_rate(soap: dict[str, Any], transcript: list[Any]) -> float:
-    """Fraction of SOAP sentences the grounding gate flags as unsupported.
+async def hallucination_rate(
+    note: dict[str, Any], transcript: list[Any], note_type: str = "soap"
+) -> float:
+    """Fraction of note sentences the grounding gate flags as unsupported.
 
     Runs the real grounding verifier so the harness number tracks production.
+    For non-SOAP notes the flat sections are wrapped in a ``ClinicalNote`` so the
+    grounding gate scores the right template sections.
     """
     from services import grounding  # local import: pulls in config/schemas
+    from core.note_templates import normalize_note_type, section_keys
 
-    total = _count_sentences(soap)
+    nt = normalize_note_type(note_type)
+    keys = tuple(section_keys(nt))
+    total = _count_sentences(note, keys)
     if total == 0:
         return 0.0
-    result = await grounding.verify(soap, transcript)
+
+    if nt == "soap":
+        target: Any = note  # flat SOAP dict — unchanged behavior
+    else:
+        from schemas.pipeline import ClinicalNote
+
+        target = ClinicalNote.from_sections(nt, note)
+
+    result = await grounding.verify(target, transcript)
     unsupported = sum(len(f.unsupported_claims) for f in result.fields)
     return min(1.0, unsupported / total)
 

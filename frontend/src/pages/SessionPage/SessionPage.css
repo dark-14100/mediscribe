@@ -161,6 +161,50 @@
   padding: 0.5rem 0.75rem;
 }
 
+.session-page__live-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.75rem 0.9rem;
+  background: rgba(99, 102, 241, 0.06);
+  border: 1px solid rgba(99, 102, 241, 0.18);
+  border-radius: var(--radius-md);
+}
+
+.session-page__live-transcript-tag {
+  align-self: flex-start;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-primary, #6366f1);
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.session-page__live-transcript-tag::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--color-primary, #6366f1);
+  animation: session-live-pulse 1.4s ease-in-out infinite;
+}
+
+.session-page__live-transcript-text {
+  margin: 0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: var(--color-text-secondary, #475569);
+  white-space: pre-wrap;
+}
+
+@keyframes session-live-pulse {
+  0%, 100% { opacity: 0.35; }
+  50% { opacity: 1; }
+}
+
 .session-page__degraded,
 .session-page__pipeline-error {
   display: flex;
