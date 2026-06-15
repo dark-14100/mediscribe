@@ -9,6 +9,10 @@ import './ConfirmDialog.css';
  *   tone        – 'primary' | 'danger' (confirm button style)
  *   busy        – disables buttons while the action runs
  *   onConfirm, onCancel
+ *   acknowledgeLabel    – when set, renders an acknowledgement checkbox
+ *   acknowledged        – controlled checkbox value
+ *   onAcknowledgeChange – fn(bool)
+ *   requireAcknowledge  – when true, Confirm stays disabled until acknowledged
  */
 export default function ConfirmDialog({
   open,
@@ -20,12 +24,18 @@ export default function ConfirmDialog({
   busy = false,
   onConfirm,
   onCancel,
+  acknowledgeLabel = null,
+  acknowledged = false,
+  onAcknowledgeChange,
+  requireAcknowledge = false,
 }) {
   if (!open) return null;
 
   function handleBackdropClick(event) {
     if (event.target === event.currentTarget && !busy) onCancel();
   }
+
+  const confirmDisabled = busy || (requireAcknowledge && !acknowledged);
 
   return (
     <div className="confirm-dialog__backdrop" onClick={handleBackdropClick} role="presentation">
@@ -39,6 +49,17 @@ export default function ConfirmDialog({
           {title}
         </h2>
         {message ? <p className="confirm-dialog__message">{message}</p> : null}
+        {acknowledgeLabel ? (
+          <label className="confirm-dialog__ack">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              disabled={busy}
+              onChange={(event) => onAcknowledgeChange?.(event.target.checked)}
+            />
+            <span>{acknowledgeLabel}</span>
+          </label>
+        ) : null}
         <div className="confirm-dialog__actions">
           <button
             type="button"
@@ -52,7 +73,7 @@ export default function ConfirmDialog({
             type="button"
             className={`confirm-dialog__confirm confirm-dialog__confirm--${tone}`}
             onClick={onConfirm}
-            disabled={busy}
+            disabled={confirmDisabled}
           >
             {busy ? 'Working…' : confirmLabel}
           </button>

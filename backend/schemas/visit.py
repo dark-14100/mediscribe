@@ -41,6 +41,18 @@ class NoteSaveRequest(BaseModel):
     doctor_modified_fields: list[str] = Field(default_factory=list)
 
 
+class NoteSignRequest(BaseModel):
+    """Optional body for POST /notes/sign.
+
+    Only consulted when ``GROUNDING_MODE=enforce`` and the note still has
+    unverified claims: the doctor must set ``acknowledged=true`` to sign anyway.
+    Defaulting to False keeps ``warn``/``off`` callers (which send no body)
+    working unchanged.
+    """
+
+    acknowledged: bool = False
+
+
 class NoteSignResponse(BaseModel):
     visit_id: uuid.UUID
     is_signed: bool

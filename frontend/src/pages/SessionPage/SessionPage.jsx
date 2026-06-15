@@ -160,6 +160,10 @@ export default function SessionPage() {
   const [saveError, setSaveError] = useState(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [confirmSignOpen, setConfirmSignOpen] = useState(false);
+  // Grounding enforce gate: the doctor's "I reviewed flagged claims" checkbox,
+  // and whether the backend (enforce mode) has demanded it via a 412.
+  const [signAck, setSignAck] = useState(false);
+  const [signNeedsAck, setSignNeedsAck] = useState(false);
   const sseRef = useRef(null);
 
   // ── SSE event handlers ───────────────────────────────────────────────────
@@ -559,18 +563,29 @@ export default function SessionPage() {
       });
       const saved = await saveRes.json();
       applyComplianceFromVisit(saved);
-      await apiFetch(`/notes/sign/${visitId}`, { method: 'POST' });
+      await apiFetch(`/notes/sign/${visitId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acknowledged: signAck }),
+      });
       setHasUnsavedChanges(false);
       setPipelineStatus('signed');
       setConfirmSignOpen(false);
+      setSignNeedsAck(false);
+      setSignAck(false);
       toast.success('Note signed and locked');
     } catch (err) {
-      const already = err?.status === 409;
-      if (already) {
+      if (err?.status === 409) {
         setHasUnsavedChanges(false);
         setPipelineStatus('signed');
         setConfirmSignOpen(false);
         toast.info('This note was already signed.');
+      } else if (err?.status === 412) {
+        // Enforce mode: unverified claims must be acknowledged. Keep the dialog
+        // open with the checkbox now required.
+        setSignNeedsAck(true);
+        setPipelineStatus('done');
+        toast.error('Unverified statements must be acknowledged before signing.');
       } else {
         console.error('[SessionPage] sign failed:', err);
         setSaveError('Failed to sign — please try again.');
@@ -582,6 +597,15 @@ export default function SessionPage() {
   }
 
   // ── derived ──────────────────────────────────────────────────────────────
+
+  const groundingFlags = useMemo(() => {
+    if (!grounding) return [];
+    const flagged = (grounding.fields || [])
+      .filter((f) => (f.unsupported_claims || []).length > 0)
+      .map((f) => f.field);
+    if (flagged.length === 0 && grounding.status === 'ungrounded') return ['note'];
+    return flagged;
+  }, [grounding]);
 
   const isSigned = pipelineStatus === 'signed';
   const isSaving = pipelineStatus === 'saving' || pipelineStatus === 'signing';
@@ -794,7 +818,11 @@ export default function SessionPage() {
                 <button
                   type="button"
                   className="session-page__sign"
-                  onClick={() => setConfirmSignOpen(true)}
+                  onClick={() => {
+                    setSignAck(false);
+                    setSignNeedsAck(false);
+                    setConfirmSignOpen(true);
+                  }}
                   disabled={isSaving}
                 >
                   {pipelineStatus === 'signing' ? 'Signing…' : 'Sign Off'}
@@ -846,8 +874,20 @@ export default function SessionPage() {
         confirmLabel="Sign & lock"
         cancelLabel="Keep editing"
         busy={pipelineStatus === 'signing'}
+        acknowledgeLabel={
+          groundingFlags.length > 0 || signNeedsAck
+            ? 'I reviewed the flagged statements and accept responsibility for signing.'
+            : null
+        }
+        acknowledged={signAck}
+        onAcknowledgeChange={setSignAck}
+        requireAcknowledge={signNeedsAck}
         onConfirm={handleConfirmSignOff}
-        onCancel={() => setConfirmSignOpen(false)}
+        onCancel={() => {
+          setConfirmSignOpen(false);
+          setSignAck(false);
+          setSignNeedsAck(false);
+        }}
       />
     </div>
   );

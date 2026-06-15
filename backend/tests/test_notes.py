@@ -106,3 +106,131 @@ async def test_save_after_sign_returns_409(client, doctor_user):
         f"/notes/save/{vid}", json=_SOAP_BODY, headers=auth_header(doctor_user)
     )
     assert save.status_code == 409
+
+
+# --- Grounding enforce gate (Phase C) --------------------------------------
+
+_UNGROUNDED = {
+    "status": "ungrounded",
+    "confidence": 0.2,
+    "checked_with": "rules",
+    "fields": [
+        {
+            "field": "assessment",
+            "status": "ungrounded",
+            "confidence": 0.1,
+            "cited_lines_valid": True,
+            "unsupported_claims": [
+                {
+                    "field": "assessment",
+                    "text": "Tension headache.",
+                    "status": "ungrounded",
+                    "confidence": 0.1,
+                    "cited_lines": [4],
+                    "issue": "Cited lines don't support this.",
+                }
+            ],
+        }
+    ],
+}
+
+_GROUNDED = {
+    "status": "grounded",
+    "confidence": 1.0,
+    "checked_with": "rules",
+    "fields": [
+        {
+            "field": "assessment",
+            "status": "grounded",
+            "confidence": 1.0,
+            "cited_lines_valid": True,
+            "unsupported_claims": [],
+        }
+    ],
+}
+
+
+async def _seed_grounding(client, doctor, vid, grounding) -> None:
+    body = {**_SOAP_BODY, "soap_audit_trail": {"grounding": grounding}}
+    resp = await client.post(
+        f"/notes/save/{vid}", json=body, headers=auth_header(doctor)
+    )
+    assert resp.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_enforce_blocks_unacknowledged_ungrounded(
+    client, doctor_user, monkeypatch
+):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_MODE", "enforce")
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    await _seed_grounding(client, doctor_user, vid, _UNGROUNDED)
+
+    resp = await client.post(f"/notes/sign/{vid}", headers=auth_header(doctor_user))
+    assert resp.status_code == 412
+    assert "assessment" in resp.json()["detail"]["flagged_fields"]
+
+    visit = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    assert visit.json()["is_signed"] is False
+
+
+@pytest.mark.asyncio
+async def test_enforce_signs_with_acknowledgement(client, doctor_user, monkeypatch):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_MODE", "enforce")
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    await _seed_grounding(client, doctor_user, vid, _UNGROUNDED)
+
+    resp = await client.post(
+        f"/notes/sign/{vid}",
+        json={"acknowledged": True},
+        headers=auth_header(doctor_user),
+    )
+    assert resp.status_code == 200
+    assert resp.json()["is_signed"] is True
+
+    visit = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    ack = visit.json()["soap_audit_trail"]["grounding_ack"]
+    assert ack["by"] == str(doctor_user.id)
+    assert "assessment" in ack["flagged_fields"]
+
+
+@pytest.mark.asyncio
+async def test_enforce_signs_when_all_grounded(client, doctor_user, monkeypatch):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_MODE", "enforce")
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    await _seed_grounding(client, doctor_user, vid, _GROUNDED)
+
+    resp = await client.post(f"/notes/sign/{vid}", headers=auth_header(doctor_user))
+    assert resp.status_code == 200
+    assert resp.json()["is_signed"] is True
+
+
+@pytest.mark.asyncio
+async def test_warn_mode_signs_despite_ungrounded(client, doctor_user, monkeypatch):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_MODE", "warn")
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    await _seed_grounding(client, doctor_user, vid, _UNGROUNDED)
+
+    resp = await client.post(f"/notes/sign/{vid}", headers=auth_header(doctor_user))
+    assert resp.status_code == 200  # warn never blocks
+
+
+@pytest.mark.asyncio
+async def test_enforce_fail_closed_when_grounding_missing(
+    client, doctor_user, monkeypatch
+):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_MODE", "enforce")
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    # No grounding seeded — a missing check must not silently bypass the gate.
+    resp = await client.post(f"/notes/sign/{vid}", headers=auth_header(doctor_user))
+    assert resp.status_code == 412

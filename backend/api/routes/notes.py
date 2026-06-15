@@ -14,10 +14,16 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import require_doctor
+from core.config import settings
 from db.session import get_db
 from models.user import User
 from models.visit import Visit
-from schemas.visit import NoteSaveRequest, NoteSignResponse, VisitRead
+from schemas.visit import (
+    NoteSaveRequest,
+    NoteSignRequest,
+    NoteSignResponse,
+    VisitRead,
+)
 from services.cache import CacheClient, get_cache, patient_summary_key
 from services.compliance import check as compliance_check
 from services.visit_normalize import normalize_visit
@@ -118,20 +124,68 @@ async def save_note(
     return VisitRead.model_validate(visit)
 
 
+def _grounding_blockers(trail: dict | None) -> list[str]:
+    """Fields a doctor must acknowledge before signing under ``enforce``.
+
+    Fail-closed: if the grounding result is missing (e.g. the step degraded), we
+    return a sentinel so a missing check can't silently bypass the gate.
+    """
+    grounding = (trail or {}).get("grounding")
+    if not isinstance(grounding, dict) or not grounding:
+        return ["grounding check unavailable"]
+    flagged = [
+        str(f.get("field"))
+        for f in grounding.get("fields", []) or []
+        if isinstance(f, dict) and f.get("unsupported_claims")
+    ]
+    if grounding.get("status") == "ungrounded" and not flagged:
+        flagged.append("note")
+    return flagged
+
+
 @router.post("/sign/{visit_id}", response_model=NoteSignResponse)
 async def sign_note(
     visit_id: UUID,
     user: Annotated[User, Depends(require_doctor)],
     db: Annotated[AsyncSession, Depends(get_db)],
     cache: Annotated[CacheClient, Depends(get_cache)],
+    payload: NoteSignRequest | None = None,
 ) -> NoteSignResponse:
-    """Mark a visit as signed. Returns 409 if already signed."""
+    """Mark a visit as signed. Returns 409 if already signed.
+
+    Under ``GROUNDING_MODE=enforce``, signing a note that still has unverified
+    claims requires ``acknowledged=true`` (else 412); the acknowledgement is
+    stamped into the audit trail.
+    """
     visit = await _load_my_visit(visit_id, user, db)
 
     if visit.is_signed:
         raise HTTPException(
             status.HTTP_409_CONFLICT, detail="Note is already signed"
         )
+
+    acknowledged = bool(payload and payload.acknowledged)
+    if settings.GROUNDING_MODE.strip().lower() == "enforce":
+        flagged = _grounding_blockers(visit.soap_audit_trail)
+        if flagged and not acknowledged:
+            raise HTTPException(
+                status.HTTP_412_PRECONDITION_FAILED,
+                detail={
+                    "message": (
+                        "This note has unverified statements. Review them and "
+                        "acknowledge to sign."
+                    ),
+                    "flagged_fields": flagged,
+                },
+            )
+        if flagged and acknowledged:
+            trail = dict(visit.soap_audit_trail or {})
+            trail["grounding_ack"] = {
+                "by": str(user.id),
+                "at": datetime.now(timezone.utc).isoformat(),
+                "flagged_fields": flagged,
+            }
+            visit.soap_audit_trail = trail
 
     visit.is_signed = True
     visit.signed_at = datetime.now(timezone.utc)
