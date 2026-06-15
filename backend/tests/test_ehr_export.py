@@ -51,6 +51,24 @@ def test_build_document_reference_maps_loinc_and_text():
     decoded = base64.b64decode(doc["content"][0]["attachment"]["data"]).decode()
     assert "Chief Complaint:" in decoded
     assert "Stable angina." in decoded
+    # No language passed -> attachment carries no language tag.
+    assert "language" not in doc["content"][0]["attachment"]
+
+
+def test_build_document_reference_sets_attachment_language():
+    from datetime import datetime, timezone
+
+    from services.ehr_export import build_document_reference
+
+    doc = build_document_reference(
+        note_type="soap",
+        sections={"subjective": {"text": "Dolor en el pecho."}},
+        patient_reference="Patient/1",
+        doctor_name="Dra. Demo",
+        signed_at=datetime(2026, 6, 15, tzinfo=timezone.utc),
+        language="es",
+    )
+    assert doc["content"][0]["attachment"]["language"] == "es"
 
 
 def test_assemble_note_text_skips_empty_sections_and_orders_by_template():

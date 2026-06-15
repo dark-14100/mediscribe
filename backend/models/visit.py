@@ -41,6 +41,12 @@ class Visit(Base):
         String(16), nullable=False, default="soap", server_default="soap"
     )
 
+    # BCP-47 language the note is written in (and typically spoken). Default "en"
+    # keeps existing visits unchanged.
+    language: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="en", server_default="en"
+    )
+
     # Note output + audit. The column name stays `soap_note` for back-compat, but
     # it holds the flat {section_key: {text, source_lines}} map for any note type.
     soap_note: Mapped[dict[str, Any]] = mapped_column(

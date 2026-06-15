@@ -67,7 +67,7 @@ _FAKE_SOAP = SOAPNote(
 def ai_services_installed(monkeypatch):
     """Install fake AI service modules for the duration of the test."""
 
-    async def transcribe(audio_bytes: bytes):
+    async def transcribe(audio_bytes: bytes, language=None):
         return _FAKE_TRANSCRIPT
 
     async def generate(transcript):

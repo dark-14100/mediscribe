@@ -284,6 +284,7 @@ async def ehr_export(
             patient=patient,
             doctor_name=user.full_name,
             signed_at=visit.signed_at,
+            language=getattr(visit, "language", None),
         )
         result.status = "filed"
         result.document_reference_id = outcome["document_reference_id"]

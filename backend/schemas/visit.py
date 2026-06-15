@@ -17,6 +17,7 @@ from schemas.pipeline import CodingDecisions, SOAPField, SOAPNote
 class VisitCreate(BaseModel):
     patient_id: uuid.UUID
     note_type: str = "soap"
+    language: str = "en"
 
 
 class RecentVisitRead(BaseModel):
@@ -82,6 +83,7 @@ class VisitRead(BaseModel):
     audio_url: str | None = None
 
     note_type: str = "soap"
+    language: str = "en"
     soap_note: dict[str, Any] = Field(default_factory=dict)
     soap_audit_trail: dict[str, Any] = Field(default_factory=dict)
 

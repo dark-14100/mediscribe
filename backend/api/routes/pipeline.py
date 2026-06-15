@@ -67,6 +67,7 @@ from schemas.pipeline import (
     TrajectoryResult,
     TranscribeResponse,
 )
+from core.languages import normalize_language
 from core.note_templates import normalize_note_type
 from services.deid import count_residual, reidentify
 from core.audit import log_phi_access
@@ -299,8 +300,13 @@ async def transcribe(
         _resolve("services.transcription", "transcribe"),
         "Transcription service",
     )
+    # Optional ASR language hint: when we know the visit's language and the hint
+    # is enabled, tell Whisper rather than relying on auto-detect.
+    lang_hint: str | None = None
+    if visit is not None and settings.WHISPER_LANGUAGE_HINT:
+        lang_hint = normalize_language(getattr(visit, "language", None))
     try:
-        transcript = await transcribe_fn(audio_bytes)
+        transcript = await transcribe_fn(audio_bytes, language=lang_hint)
     except Exception as exc:
         # Log the upstream detail server-side; return a generic message so we
         # don't leak provider/internal error text to the client.
@@ -451,6 +457,15 @@ async def _run_pipeline(
     )
     visit.note_type = note_type
 
+    # Resolve the note language the same way: request override, else the visit's
+    # stored language, else the default. The note is generated in this language.
+    language = normalize_language(
+        payload.language
+        or getattr(visit, "language", None)
+        or settings.DEFAULT_NOTE_LANGUAGE
+    )
+    visit.language = language
+
     # --- Step 1.5: De-identify before any LLM sees the text --------------
     # Replace PHI with reversible placeholders; the whole LLM portion runs on
     # the clean copy, and every output is re-identified at the boundaries.
@@ -502,6 +517,7 @@ async def _run_pipeline(
                 note_fn,
                 clean_transcript,
                 note_type,
+                language,
                 default=None,
                 label="soap_generator",
                 degraded=degraded_steps,
@@ -756,6 +772,7 @@ async def _run_pipeline(
     return PipelinePayload(
         visit_id=visit.id,
         note_type=note_type,
+        language=language,
         note=note_pub,
         soap_note=SOAPNote.model_validate(soap_note_pub),
         anomalies=_reid(anomalies) or [],
@@ -886,9 +903,11 @@ async def run_status(
     )
     stored_note_type = normalize_note_type(getattr(visit, "note_type", None))
     stored_note = ClinicalNote.from_sections(stored_note_type, visit.soap_note or {})
+    stored_language = normalize_language(getattr(visit, "language", None))
     return PipelinePayload(
         visit_id=visit.id,
         note_type=stored_note_type,
+        language=stored_language,
         note=stored_note,
         soap_note=stored_note.to_soap(),
         anomalies=visit.anomalies or [],

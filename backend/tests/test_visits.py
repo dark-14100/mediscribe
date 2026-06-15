@@ -41,6 +41,26 @@ async def test_create_visit_for_my_patient(client, doctor_user):
     assert body["is_signed"] is False
     assert body["soap_note"] == {}
     assert body["anomalies"] == []
+    # Defaults: SOAP note in English.
+    assert body["note_type"] == "soap"
+    assert body["language"] == "en"
+
+
+@pytest.mark.asyncio
+async def test_create_visit_persists_language_round_trip(client, doctor_user):
+    pid = await _create_patient(client, doctor_user)
+    created = await client.post(
+        "/visits",
+        json={"patient_id": pid, "language": "es"},
+        headers=auth_header(doctor_user),
+    )
+    assert created.status_code == 201
+    vid = created.json()["id"]
+    assert created.json()["language"] == "es"
+
+    fetched = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    assert fetched.status_code == 200
+    assert fetched.json()["language"] == "es"
 
 
 @pytest.mark.asyncio

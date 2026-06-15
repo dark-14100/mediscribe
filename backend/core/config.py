@@ -102,6 +102,15 @@ class Settings(BaseSettings):
     GROUNDING_GROUNDED_THRESHOLD: float = 0.6
     GROUNDING_PARTIAL_THRESHOLD: float = 0.3
 
+    # --- Multilingual ---
+    # Default BCP-47 language for new visits ("en" keeps everything unchanged).
+    # The note is generated in the visit's language; when it differs from "en" a
+    # one-line language instruction is appended to the generator prompt.
+    DEFAULT_NOTE_LANGUAGE: str = "en"
+    # Pass the visit's language to Whisper as a hint (improves ASR accuracy when
+    # the language is known); when false, Whisper auto-detects.
+    WHISPER_LANGUAGE_HINT: bool = True
+
     # --- EHR write-back (file the signed note into the hospital EHR as FHIR) ---
     # Builds a FHIR R4 DocumentReference and POSTs it to a configured FHIR server.
     #   off    = feature disabled (default)

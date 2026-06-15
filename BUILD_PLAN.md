@@ -162,7 +162,7 @@ Researched against the 2026 leaders (Nuance DAX Copilot, Abridge, Suki, Nabla, D
 | **Live transcription view** | Transcription happens in one batch, not word-by-word live. | Doctors expect to watch the note form in real time. | ✅ Done (near-live preview: cumulative chunks re-transcribed every 6s while recording; final diarized pass on stop) |
 | **Multiple note types** | We only produce SOAP. | Rivals ship 6+ (H&P, progress note, discharge summary, etc.). | ✅ Done (A: SOAP + H&P + progress + discharge · B: per-type coding/compliance · C: demo + eval data) |
 | **Accuracy benchmark** | No measured/published accuracy numbers. | Buyers ask "how accurate, how often does it hallucinate?" We need an answer. | ✅ Done (eval harness) |
-| **Multilingual** | English-focused. | Competitors advertise 28–80+ languages. | ◻️ |
+| **Multilingual** | English-focused. | Competitors advertise 28–80+ languages. | 🟡 Phase A shipped (per-visit `language`; note generated in the spoken language, English unchanged; Whisper hint + FHIR `attachment.language` + selector — see `MULTILINGUAL_SPEC.md`) |
 | **Certifications** | No SOC 2 / HITRUST yet. | A hard gate for hospital procurement. | ◻️ |
 
 ---
@@ -255,7 +255,7 @@ The core pipeline (our moat) stays exactly as-is. We're **wrapping** it with a t
 | 2 | Coding agent (ICD-10 / CPT / E&M) | ✅ Done (A: suggest · B: confirm/edit/dismiss) | Medium | grounding gate (Phase 1) ✅ |
 | 2 | Multiple note types | ✅ Done (A: SOAP+H&P+progress+discharge · B: per-type coding/compliance · C: demo+eval) | Medium | — |
 | 2 | Live transcription view | ✅ Done (near-live preview; word-level streaming later) | Medium | streaming ASR provider for word-level |
-| 3 | Multilingual | ◻️ | Medium | — |
+| 3 | Multilingual | 🟡 Phase A shipped (note in spoken language; cross-lingual + multilingual de-id = Phase B) | Medium | — |
 | 3 | Multi-model orchestration + fallback | ◻️ | Low–Med | — |
 | 3 | SOC 2 / HITRUST + consent | ◻️ | Operational | — |
 

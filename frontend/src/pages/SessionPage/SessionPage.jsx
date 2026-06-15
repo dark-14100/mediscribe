@@ -31,6 +31,7 @@ import {
   normalizeNoteType,
   sectionKeys,
 } from '../../lib/noteTemplates.js';
+import { languageChoices, normalizeLanguage } from '../../lib/languages.js';
 import {
   getInitialTrajectory,
   getSessionPatient,
@@ -140,6 +141,7 @@ export default function SessionPage() {
   const [transcript, setTranscript] = useState([]);
   const [liveTranscript, setLiveTranscript] = useState('');
   const [noteType, setNoteType] = useState('soap');
+  const [language, setLanguage] = useState('en');
   const [soap, setSoap] = useState(() => emptyNote('soap'));
   const [visibleFields, setVisibleFields] = useState(() => new Set());
   const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
@@ -178,6 +180,11 @@ export default function SessionPage() {
   useEffect(() => {
     noteTypeRef.current = noteType;
   }, [noteType]);
+  // The note language is read inside the once-created run handler via a ref.
+  const languageRef = useRef('en');
+  useEffect(() => {
+    languageRef.current = language;
+  }, [language]);
 
   // ── SSE event handlers ───────────────────────────────────────────────────
 
@@ -278,6 +285,7 @@ export default function SessionPage() {
 
         const existingNoteType = normalizeNoteType(visit.note_type);
         setNoteType(existingNoteType);
+        setLanguage(normalizeLanguage(visit.language));
         const existingSoap = normalizeSoap(
           { soap_note: visit.soap_note },
           existingNoteType,
@@ -383,6 +391,7 @@ export default function SessionPage() {
         const p = await res.json();
         const recoveredType = normalizeNoteType(p.note_type);
         setNoteType(recoveredType);
+        if (p.language) setLanguage(normalizeLanguage(p.language));
         const soapNorm = normalizeSoap(p, recoveredType);
         if (soapNorm) {
           setSoap(soapNorm);
@@ -464,6 +473,7 @@ export default function SessionPage() {
             visit_id: visitId,
             transcript: lines,
             note_type: noteTypeRef.current,
+            language: languageRef.current,
           }),
         });
         // SSE events drive the live UI; pipeline_done flips status to 'done' and
@@ -529,6 +539,10 @@ export default function SessionPage() {
     setSoap(emptyNote(normalized));
     setVisibleFields(new Set());
     setDoctorModifiedFields(new Set());
+  }, []);
+
+  const handleLanguageChange = useCallback((next) => {
+    setLanguage(normalizeLanguage(next));
   }, []);
 
   // Warn before leaving with unsaved edits (covers refresh / tab close).
@@ -794,6 +808,25 @@ export default function SessionPage() {
               {noteTypeChoices().map(({ key, label }) => (
                 <option key={key} value={key}>
                   {label}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="session-page__note-type">
+            <label htmlFor="note-language-select" className="session-page__note-type-label">
+              Language
+            </label>
+            <select
+              id="note-language-select"
+              className="session-page__note-type-select"
+              value={language}
+              onChange={(e) => handleLanguageChange(e.target.value)}
+              disabled={recorderDisabled || transcript.length > 0 || sessionLoading}
+            >
+              {languageChoices().map(({ code, label, nativeLabel }) => (
+                <option key={code} value={code}>
+                  {label === nativeLabel ? label : `${label} (${nativeLabel})`}
                 </option>
               ))}
             </select>

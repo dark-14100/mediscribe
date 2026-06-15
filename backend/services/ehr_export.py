@@ -94,6 +94,7 @@ def build_document_reference(
     doctor_name: str | None,
     signed_at: datetime | None,
     title: str | None = None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """Map a signed note to a FHIR R4 DocumentReference (US Core clinical-note)."""
     code, display = loinc(note_type)
@@ -102,6 +103,14 @@ def build_document_reference(
     note_text = assemble_note_text(note_type, sections)
     encoded = base64.b64encode(note_text.encode("utf-8")).decode("ascii")
     doc_title = title or f"{display} — {when.date().isoformat()}"
+    attachment: dict[str, Any] = {
+        "contentType": "text/plain",
+        "data": encoded,
+        "title": doc_title,
+        "creation": when_iso,
+    }
+    if language:
+        attachment["language"] = language
 
     doc: dict[str, Any] = {
         "resourceType": "DocumentReference",
@@ -124,16 +133,7 @@ def build_document_reference(
         ],
         "subject": {"reference": patient_reference},
         "date": when_iso,
-        "content": [
-            {
-                "attachment": {
-                    "contentType": "text/plain",
-                    "data": encoded,
-                    "title": doc_title,
-                    "creation": when_iso,
-                }
-            }
-        ],
+        "content": [{"attachment": attachment}],
     }
     if doctor_name:
         doc["author"] = [{"display": doctor_name}]
@@ -238,6 +238,7 @@ async def export_note(
     patient: Any,
     doctor_name: str | None,
     signed_at: datetime | None,
+    language: str | None = None,
 ) -> dict[str, Any]:
     """File a signed note into the configured FHIR server.
 
@@ -257,6 +258,7 @@ async def export_note(
         patient_reference=patient_reference,
         doctor_name=doctor_name,
         signed_at=signed_at,
+        language=language,
     )
     resp = await _fhir_post(base, "DocumentReference", doc, headers)
     doc_id = _resource_id_from_response(resp, "DocumentReference")

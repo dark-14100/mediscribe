@@ -324,6 +324,9 @@ class PipelineRunRequest(BaseModel):
     # Optional override of the visit's note type for this run (soap | hp |
     # progress | discharge). When omitted, the visit's stored note_type is used.
     note_type: str | None = None
+    # Optional BCP-47 language for the generated note. When omitted, the visit's
+    # stored language is used (default "en").
+    language: str | None = None
 
 
 # --- Final pipeline payload ---
@@ -334,6 +337,7 @@ class PipelinePayload(BaseModel):
     # `soap_note` is the SOAP projection (always the 4 fields) for back-compat;
     # `note` carries the real, template-shaped sections + the note type.
     note_type: str = "soap"
+    language: str = "en"
     note: ClinicalNote | None = None
     soap_note: SOAPNote
     anomalies: list[AnomalyFlag] = Field(default_factory=list)

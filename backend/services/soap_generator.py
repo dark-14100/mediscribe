@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 
+from core.languages import is_default_language, native_label, normalize_language
 from core.note_templates import get_template, normalize_note_type, section_keys
 from services.groq_retry import chat_completion
 
@@ -73,6 +74,22 @@ def _validate_and_normalize_soap(payload: dict[str, Any]) -> dict[str, dict[str,
     return {key: _normalize_soap_field(payload.get(key)) for key in SOAP_KEYS}
 
 
+def _language_instruction(language: str) -> str:
+    """Extra system-prompt line forcing the note language.
+
+    Returns "" for the default language so English prompts (and their tests)
+    are byte-for-byte unchanged.
+    """
+    if is_default_language(language):
+        return ""
+    name = native_label(language)
+    return (
+        f"\n\nWrite every \"text\" value in {name} ({normalize_language(language)}). "
+        f"Keep all JSON keys in English. Do not translate medical abbreviations, "
+        f"drug names, or codes that are conventionally left as-is."
+    )
+
+
 def _parse_llm_content(content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(content)
@@ -83,15 +100,16 @@ def _parse_llm_content(content: str) -> dict[str, Any]:
     return parsed
 
 
-async def generate_soap(transcript: list[Any]) -> dict:
+async def generate_soap(transcript: list[Any], language: str = "en") -> dict:
     logger.info("[SOAP_GENERATOR] Starting SOAP generation")
     try:
         user_message = _format_transcript_for_prompt(transcript)
+        system_prompt = SYSTEM_PROMPT + _language_instruction(language)
 
         data = await chat_completion(
             model=GROQ_MODEL,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_message},
             ],
             response_format={"type": "json_object"},
@@ -144,23 +162,28 @@ def _build_note_prompt(note_type: str) -> str:
     )
 
 
-async def generate_note(transcript: list[Any], note_type: str = "soap") -> dict:
-    """Generate a clinical note of the given type.
+async def generate_note(
+    transcript: list[Any], note_type: str = "soap", language: str = "en"
+) -> dict:
+    """Generate a clinical note of the given type, in the given language.
 
     Returns a flat ``{section_key: {text, source_lines}}`` dict. For ``soap`` this
     delegates to ``generate_soap`` so the SOAP path is byte-for-byte unchanged.
+    Section *content* is written in ``language``; JSON keys stay English.
     """
     note_type = normalize_note_type(note_type)
+    language = normalize_language(language)
     if note_type == "soap":
-        return await generate_soap(transcript)
+        return await generate_soap(transcript, language)
 
     keys = section_keys(note_type)
     logger.info("[SOAP_GENERATOR] Starting %s generation", note_type)
     try:
+        system_prompt = _build_note_prompt(note_type) + _language_instruction(language)
         data = await chat_completion(
             model=GROQ_MODEL,
             messages=[
-                {"role": "system", "content": _build_note_prompt(note_type)},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": _format_transcript_for_prompt(transcript)},
             ],
             response_format={"type": "json_object"},

@@ -156,14 +156,25 @@ async def _whisper_segments(
     filename: str = "audio.webm",
     content_type: str = "audio/webm",
     timeout: float = 120.0,
+    language: str | None = None,
 ) -> list[dict]:
-    """Run Groq Whisper on raw bytes and return its raw (undiarized) segments."""
+    """Run Groq Whisper on raw bytes and return its raw (undiarized) segments.
+
+    ``language`` is an optional ISO-639-1 hint; when omitted Whisper auto-detects.
+    """
     temp_dir: str | None = None
     try:
         suffix = Path(filename).suffix or ".webm"
         temp_dir = tempfile.mkdtemp()
         temp_path = Path(temp_dir) / f"audio{suffix}"
         temp_path.write_bytes(audio_bytes)
+
+        form_data: dict[str, str] = {
+            "model": GROQ_WHISPER_MODEL,
+            "response_format": "verbose_json",
+        }
+        if language:
+            form_data["language"] = language
 
         async def _request() -> httpx.Response:
             async with httpx.AsyncClient() as client:
@@ -172,10 +183,7 @@ async def _whisper_segments(
                         GROQ_TRANSCRIPTION_URL,
                         headers={"Authorization": f"Bearer {settings.GROQ_API_KEY}"},
                         files={"file": (filename, audio_file, content_type)},
-                        data={
-                            "model": GROQ_WHISPER_MODEL,
-                            "response_format": "verbose_json",
-                        },
+                        data=form_data,
                         timeout=timeout,
                     )
             if response.status_code != 200:
@@ -205,9 +213,10 @@ async def _call_groq_whisper(
     *,
     filename: str = "audio.webm",
     content_type: str = "audio/webm",
+    language: str | None = None,
 ) -> list[dict[str, str | int]]:
     segments = await _whisper_segments(
-        audio_bytes, filename=filename, content_type=content_type
+        audio_bytes, filename=filename, content_type=content_type, language=language
     )
     if not segments:
         raise ValueError("Groq returned no transcription segments")
@@ -222,13 +231,18 @@ async def _call_groq_whisper(
 # Public entry points
 # ---------------------------------------------------------------------------
 
-async def transcribe(audio_bytes: bytes) -> list[dict[str, str | int]]:
-    """Pipeline entry point: diarised transcript lines from raw audio bytes."""
+async def transcribe(
+    audio_bytes: bytes, language: str | None = None
+) -> list[dict[str, str | int]]:
+    """Pipeline entry point: diarised transcript lines from raw audio bytes.
+
+    ``language`` is an optional ISO-639-1 hint; when omitted Whisper auto-detects.
+    """
     logger.info("[TRANSCRIPTION] Starting transcription")
     if not audio_bytes:
         raise ValueError("Audio file is empty")
     try:
-        transcript = await _call_groq_whisper(audio_bytes)
+        transcript = await _call_groq_whisper(audio_bytes, language=language)
         logger.info(
             "[TRANSCRIPTION] Transcription successful (%d lines)",
             len(transcript),

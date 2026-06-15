@@ -4,6 +4,8 @@
 
 Last updated: 2026-06-15 · Companion to `BUILD_PLAN.md`, `NOTE_TYPES_SPEC.md`, `GROUNDING_GATE_SPEC.md`, `DEID_SPEC.md`, `EHR_WRITEBACK_SPEC.md`.
 
+> **Status: Phase A shipped.** Each visit carries a BCP-47 `language` (default `en`); the note is generated in the visit's language while English output stays byte-for-byte unchanged. Whisper takes the language as an ASR hint, the FHIR `DocumentReference` carries `attachment.language`, and `SessionPage` shows a language selector. Cross-lingual notes + multilingual de-id are Phase B (see §12).
+
 ---
 
 ## 1. One paragraph (plain English)
@@ -133,7 +135,7 @@ De-id (`services/deid.py`) is rules-first: it strips the **patient's own name** 
 
 | Phase | Scope | Effort | Risk |
 |---|---|---|---|
-| **A** | `visit.language` (migration 003) + language registry + generator `language` arg (en unchanged) + pipeline/visit/read wiring + frontend selector + Whisper hint + EHR attachment language. **Note language = spoken language.** | Medium | Low |
+| **A — ✅ shipped** | `visit.language` (migration 003) + language registry + generator `language` arg (en unchanged) + pipeline/visit/read wiring + frontend selector + Whisper hint + EHR attachment language. **Note language = spoken language.** | Medium | Low |
 | **B** | **Cross-lingual** notes (speak X → note Y) with auto-enabled LLM grounding verifier + **multilingual de-id** NER + localized section labels. | Medium | Medium |
 | **C** | Full **UI localization** (i18n) + per-language **eval datasets** + CJK word-segmentation for grounding + RTL support. | Med–High | Med |
 
