@@ -291,7 +291,14 @@ class GroundingResult(BaseModel):
     status: GroundingStatus
     confidence: float = Field(ge=0.0, le=1.0)
     fields: list[GroundingFieldResult] = Field(default_factory=list)
-    checked_with: Literal["rules", "rules+llm"] = "rules"
+    # "rules" / "rules+llm" (same-language) · "llm-crosslingual" (LLM-authoritative,
+    # note≠transcript language) · "crosslingual-unverified" (cross-lingual but the
+    # LLM was unavailable, so claims are flagged for manual review).
+    checked_with: Literal[
+        "rules", "rules+llm", "llm-crosslingual", "crosslingual-unverified"
+    ] = "rules"
+    # True when the note and transcript are in different languages.
+    cross_lingual: bool = False
 
 
 # --- Request / response shapes for /pipeline/* routes ---

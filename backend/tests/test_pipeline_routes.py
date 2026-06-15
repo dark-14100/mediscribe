@@ -205,7 +205,9 @@ async def test_transcribe_returns_503_when_service_missing(
     # this test so the route's _resolve returns None.
     import services.transcription as _trans_mod
 
+    # Both entry points must be absent for the service to count as "missing".
     monkeypatch.setattr(_trans_mod, "transcribe", None, raising=False)
+    monkeypatch.setattr(_trans_mod, "transcribe_detect", None, raising=False)
     resp = await client.post(
         "/pipeline/transcribe",
         headers=auth_header(doctor_user),

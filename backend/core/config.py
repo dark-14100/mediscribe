@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     GROUNDING_USE_LLM: bool = False
     GROUNDING_LLM_FIELDS: str = "assessment,plan"
     GROUNDING_MODEL: str = "llama-3.3-70b-versatile"
+    # Cross-lingual grounding (Phase B): when the note language differs from the
+    # spoken/transcript language, lexical word-overlap is meaningless, so the LLM
+    # verifier is auto-enabled as the *authoritative* judge across all cited
+    # claims. Set false to fall back to "manual review" instead of calling the LLM.
+    GROUNDING_CROSS_LINGUAL: bool = True
     # Lexical-overlap thresholds (fraction of a claim's content words found in its
     # cited transcript lines): >= grounded => grounded; >= partial => partial;
     # below partial => ungrounded.

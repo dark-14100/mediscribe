@@ -4,7 +4,9 @@
 
 Last updated: 2026-06-15 · Companion to `BUILD_PLAN.md`, `NOTE_TYPES_SPEC.md`, `GROUNDING_GATE_SPEC.md`, `DEID_SPEC.md`, `EHR_WRITEBACK_SPEC.md`.
 
-> **Status: Phase A shipped.** Each visit carries a BCP-47 `language` (default `en`); the note is generated in the visit's language while English output stays byte-for-byte unchanged. Whisper takes the language as an ASR hint, the FHIR `DocumentReference` carries `attachment.language`, and `SessionPage` shows a language selector. Cross-lingual notes + multilingual de-id are Phase B (see §12).
+> **Status: Phase A + B shipped.**
+> **A** — each visit carries a BCP-47 `language` (default `en`); the note is generated in the visit's language while English output stays byte-for-byte unchanged. Whisper takes the language as an ASR hint, the FHIR `DocumentReference` carries `attachment.language`, and `SessionPage` shows a language selector.
+> **B** — **cross-lingual** notes (speak X → note Y): Whisper's detected spoken language is stored on the visit (`transcript_language`, migration 004); when it differs from the note language the grounding gate switches from lexical word-overlap to the **LLM verifier as authoritative judge** (auto-enabled), degrading to "manual review" if the LLM is unavailable. De-id gains **localized month-name date** stripping (name + numeric scrubs were already language-agnostic), and the filed EHR document uses **localized section headers** (es/fr, English fallback). Full app-chrome i18n + CJK + per-language eval remain Phase C (see §12).
 
 ---
 
@@ -136,8 +138,19 @@ De-id (`services/deid.py`) is rules-first: it strips the **patient's own name** 
 | Phase | Scope | Effort | Risk |
 |---|---|---|---|
 | **A — ✅ shipped** | `visit.language` (migration 003) + language registry + generator `language` arg (en unchanged) + pipeline/visit/read wiring + frontend selector + Whisper hint + EHR attachment language. **Note language = spoken language.** | Medium | Low |
-| **B** | **Cross-lingual** notes (speak X → note Y) with auto-enabled LLM grounding verifier + **multilingual de-id** NER + localized section labels. | Medium | Medium |
-| **C** | Full **UI localization** (i18n) + per-language **eval datasets** + CJK word-segmentation for grounding + RTL support. | Med–High | Med |
+| **B — ✅ shipped** | **Cross-lingual** notes (speak X → note Y): `visit.transcript_language` (migration 004) from Whisper detection + auto-enabled **LLM-authoritative** grounding when note≠transcript language (graceful "manual review" degrade) + **localized de-id dates** (month names per language) + localized EHR section headers (es/fr) + cross-language grounding badge. | Medium | Medium |
+| **C** | Full **UI localization** (i18n) + per-language **eval datasets** + CJK word-segmentation for grounding + RTL support + broader section-label + multilingual NER coverage. | Med–High | Med |
+
+---
+
+## 16. As-built notes (Phase B)
+
+- **Spoken vs note language.** The selector picks the **note output** language; the **spoken** language is auto-detected by Whisper (`verbose_json.language`, mapped via `core/languages.canonical_language`) and stored on `visit.transcript_language`. Cross-lingual is simply *note ≠ spoken*; no second selector needed.
+- **Cross-lingual grounding** (`services/grounding.py`): when cross-lingual, lexical overlap is bypassed and `_verify_cross_lingual` re-grades every *cited* claim with the LLM verdict applied **authoritatively** (it can both raise and lower a verdict, unlike the same-language downgrade-only Layer 2). Claims with no valid citation stay `ungrounded`; if the LLM is off/unavailable (`GROUNDING_CROSS_LINGUAL=false` or no Groq key), claims are flagged `partial` ("manual review") via `checked_with="crosslingual-unverified"`. Same-language path is unchanged.
+- **`GroundingResult`** gains `cross_lingual: bool` and two new `checked_with` values (`llm-crosslingual`, `crosslingual-unverified`).
+- **De-id dates** (`services/deid.py`): `_build_date_word_re(language)` merges English + the spoken language's month names (`core/languages.MONTH_NAMES`) and tolerates connector words ("15 **de** enero **de** 1980"). Name/numeric scrubs were already language-agnostic.
+- **EHR** (`services/ehr_export.py`): `assemble_note_text(note_type, sections, language)` localizes section headers via `note_templates.section_labels(note_type, language)` (es/fr filled, English fallback).
+- **Config:** `GROUNDING_CROSS_LINGUAL` (default true).
 
 ---
 

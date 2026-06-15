@@ -43,6 +43,11 @@
   background: rgba(192, 57, 43, 0.12);
 }
 
+.soap-note__grounding--xlingual {
+  color: #5b4bc4;
+  background: rgba(91, 75, 196, 0.12);
+}
+
 .soap-note__chip {
   font-size: 0.625rem;
   font-weight: 700;

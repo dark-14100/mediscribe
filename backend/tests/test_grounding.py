@@ -251,3 +251,73 @@ async def test_llm_only_called_for_configured_fields(monkeypatch):
     )
     await verify(soap, _TRANSCRIPT)
     assert calls == ["assessment"]  # never subjective/objective/plan
+
+
+# --- Phase B: cross-lingual grounding (note language != transcript language) ---
+
+
+def _xlingual_soap():
+    # English note cited against an English transcript, but we *declare* it
+    # cross-lingual so the lexical layer is bypassed in favour of the LLM.
+    return SOAPNote(
+        subjective=SOAPField(text="Patient reports severe headache.", source_lines=[2]),
+        objective=SOAPField(text="", source_lines=[]),
+        assessment=SOAPField(text="Tension headache.", source_lines=[2]),
+        plan=SOAPField(text="Recommend ibuprofen.", source_lines=[2]),
+    )
+
+
+@pytest.mark.asyncio
+async def test_cross_lingual_uses_llm_authoritatively(monkeypatch):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_CROSS_LINGUAL", True)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "test-key")
+    # LLM (cross-lingual judge) says every cited claim is supported.
+    _install_fake_groq(monkeypatch, verdict="SUPPORTED")
+    result = await verify(
+        _xlingual_soap(), _TRANSCRIPT, note_language="en", transcript_language="es"
+    )
+    assert result.cross_lingual is True
+    assert result.checked_with == "llm-crosslingual"
+    # Authoritative SUPPORTED verdict grounds the cited claims (lexical ignored).
+    assert result.status == "grounded"
+
+
+@pytest.mark.asyncio
+async def test_cross_lingual_llm_can_flag_unsupported(monkeypatch):
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "GROUNDING_CROSS_LINGUAL", True)
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "test-key")
+    _install_fake_groq(monkeypatch, verdict="NOT_SUPPORTED")
+    result = await verify(
+        _xlingual_soap(), _TRANSCRIPT, note_language="en", transcript_language="es"
+    )
+    assert result.cross_lingual is True
+    assert result.status == "ungrounded"
+
+
+@pytest.mark.asyncio
+async def test_cross_lingual_degrades_to_review_without_llm(monkeypatch):
+    from core.config import settings
+
+    # No Groq key -> cannot verify cross-lingually -> flag for manual review,
+    # never silently pass on bogus lexical scores.
+    monkeypatch.setattr(settings, "GROQ_API_KEY", "")
+    result = await verify(
+        _xlingual_soap(), _TRANSCRIPT, note_language="en", transcript_language="es"
+    )
+    assert result.cross_lingual is True
+    assert result.checked_with == "crosslingual-unverified"
+    assert result.status == "partial"
+
+
+@pytest.mark.asyncio
+async def test_same_language_is_not_cross_lingual():
+    # Identical note/transcript language -> the rules path, unchanged.
+    result = await verify(
+        _xlingual_soap(), _TRANSCRIPT, note_language="en", transcript_language="en"
+    )
+    assert result.cross_lingual is False
+    assert result.checked_with == "rules"

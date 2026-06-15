@@ -29,6 +29,7 @@ from collections import defaultdict
 from typing import Any
 
 from core.config import settings
+from core.languages import month_names
 from schemas.pipeline import DeidReport, TranscriptLine
 
 logger = logging.getLogger("medscribe.deid")
@@ -48,10 +49,6 @@ _MONTHS = (
     "January|February|March|April|May|June|July|August|September|October|"
     "November|December|Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec"
 )
-_DATE_WORD_RE = re.compile(
-    rf"\b(?:{_MONTHS})\.?\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?\s+\d{{4}})?\b",
-    re.IGNORECASE,
-)
 _PHONE_RE = re.compile(
     r"(?<!\d)(?:\+?\d{1,2}[\s.-]?)?(?:\(?\d{3}\)?[\s.-]?)\d{3}[\s.-]?\d{4}(?!\d)"
 )
@@ -60,14 +57,46 @@ _LONG_ID_RE = re.compile(r"\b\d{6,}\b")
 _PLACEHOLDER_RE = re.compile(r"\[[A-Z]+(?:_\d+)?\]")
 
 
+def _build_date_word_re(language: str | None) -> re.Pattern[str]:
+    """Word-date regex covering English + the transcript language's month names,
+    in both month-first ("January 5, 2020") and day-first ("5 enero 2020") order.
+
+    Localized month support means date redaction keeps working for non-English
+    transcripts (the patient-name + numeric scrubs are already language-agnostic).
+    """
+    english = [m for m in _MONTHS.split("|") if m]
+    localized = month_names(language)
+    # De-dupe case-insensitively, longest first so "septiembre" wins over "sep".
+    seen: set[str] = set()
+    months: list[str] = []
+    for m in sorted(english + localized, key=len, reverse=True):
+        low = m.lower()
+        if low not in seen:
+            seen.add(low)
+            months.append(re.escape(m))
+    alt = "|".join(months)
+    # Optional connector between day/month/year for non-English grammar:
+    # "15 de enero de 1980" (es/pt), "15 di gennaio" (it), "15th of January" (en).
+    conn = r"(?:\s+(?:de|del|di|du|of|d['’]))?"
+    month_first = (
+        rf"(?:{alt})\.?{conn}\s+\d{{1,2}}(?:st|nd|rd|th)?(?:,?{conn}\s+\d{{4}})?"
+    )
+    day_first = (
+        rf"\d{{1,2}}(?:st|nd|rd|th)?{conn}\s+(?:{alt})\.?(?:,?{conn}\s+\d{{4}})?"
+    )
+    return re.compile(rf"\b(?:{month_first}|{day_first})\b", re.IGNORECASE)
+
+
 class _Deidentifier:
-    def __init__(self, patient: Any = None) -> None:
+    def __init__(self, patient: Any = None, language: str | None = None) -> None:
         self.mapping: dict[str, str] = {}          # placeholder -> original
         self._seen: dict[tuple[str, str], str] = {}  # (category, lower) -> placeholder
         self._family_counts: dict[str, int] = defaultdict(int)
         self.counts: dict[str, int] = defaultdict(int)  # category -> occurrences
         self._full_name_low = ""
         self._known = self._build_known(patient)
+        # Date stripping uses the spoken language's month names (+ English).
+        self._date_word_re = _build_date_word_re(language)
 
     # -- setup -------------------------------------------------------------
     def _build_known(self, patient: Any) -> list[tuple[re.Pattern[str], str, str]]:
@@ -139,7 +168,7 @@ class _Deidentifier:
 
         if settings.DEID_REDACT_DATES:
             text = self._scrub_regex(text, _DATE_NUM_RE, "date")
-            text = self._scrub_regex(text, _DATE_WORD_RE, "date")
+            text = self._scrub_regex(text, self._date_word_re, "date")
         text = self._scrub_regex(text, _PHONE_RE, "phone")
         text = self._scrub_regex(text, _LONG_ID_RE, "id")
         return text
@@ -176,9 +205,15 @@ class DeidResult:
         return self._d.report()
 
 
-def deidentify_transcript(transcript: list[Any], patient: Any = None) -> DeidResult:
-    """Return a de-identified copy of the transcript (PHI replaced) + a map."""
-    deidentifier = _Deidentifier(patient)
+def deidentify_transcript(
+    transcript: list[Any], patient: Any = None, language: str | None = None
+) -> DeidResult:
+    """Return a de-identified copy of the transcript (PHI replaced) + a map.
+
+    ``language`` is the spoken/transcript language; it selects localized month
+    names for date stripping (name + numeric scrubs are language-agnostic).
+    """
+    deidentifier = _Deidentifier(patient, language)
     clean: list[TranscriptLine] = []
     for entry in transcript or []:
         data = entry.model_dump() if hasattr(entry, "model_dump") else dict(entry)

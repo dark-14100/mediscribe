@@ -26,6 +26,7 @@ import re
 from typing import Any, Literal
 
 from core.config import settings
+from core.languages import is_cross_lingual
 from core.note_templates import (
     grounding_weights as _template_weights,
     normalize_note_type,
@@ -39,6 +40,10 @@ from schemas.pipeline import (
 )
 
 logger = logging.getLogger("medscribe.grounding")
+
+GroundingCheckedWith = Literal[
+    "rules", "rules+llm", "llm-crosslingual", "crosslingual-unverified"
+]
 
 SOAP_KEYS: tuple[str, ...] = ("subjective", "objective", "assessment", "plan")
 
@@ -251,15 +256,16 @@ def _llm_field_set(keys: tuple[str, ...]) -> set[str]:
     return requested & set(keys)
 
 
-async def _llm_verify_field(
-    key: str, all_claims: list[GroundingClaim], line_map: dict[int, str]
+async def _llm_verify_indexed(
+    key: str,
+    all_claims: list[GroundingClaim],
+    line_map: dict[int, str],
+    indices: list[int],
 ) -> dict[int, tuple[GroundingStatus, str | None]]:
-    """Ask the LLM to judge the field's grounded/partial claims against their
-    cited lines. Returns {claim_index: (status, reason)}. Raises on transport
-    errors so the caller can fall back to the rules result."""
-    eligible = [
-        (i, c) for i, c in enumerate(all_claims) if c.status in ("grounded", "partial")
-    ]
+    """Ask the LLM to judge the claims at ``indices`` against their cited lines.
+    Returns {claim_index: (status, reason)}. Raises on transport errors so the
+    caller can fall back."""
+    eligible = [(i, all_claims[i]) for i in indices]
     if not eligible:
         return {}
 
@@ -302,6 +308,16 @@ async def _llm_verify_field(
     return verdicts
 
 
+async def _llm_verify_field(
+    key: str, all_claims: list[GroundingClaim], line_map: dict[int, str]
+) -> dict[int, tuple[GroundingStatus, str | None]]:
+    """Same-language Layer 2: re-check the field's grounded/partial claims."""
+    indices = [
+        i for i, c in enumerate(all_claims) if c.status in ("grounded", "partial")
+    ]
+    return await _llm_verify_indexed(key, all_claims, line_map, indices)
+
+
 def _merge_claims(
     all_claims: list[GroundingClaim],
     verdicts: dict[int, tuple[GroundingStatus, str | None]],
@@ -334,23 +350,203 @@ def _merge_claims(
     return merged
 
 
-async def verify(soap_note: Any, transcript: list[Any]) -> GroundingResult:
-    """Return a grounding verdict for a SOAP note against its transcript.
+def _assemble_result(
+    keys: tuple[str, ...],
+    graded: dict[str, tuple[GroundingFieldResult, list[GroundingClaim]]],
+    weights: dict[str, float],
+    checked_with: GroundingCheckedWith,
+    cross_lingual: bool,
+) -> GroundingResult:
+    """Roll graded fields into an overall verdict (weighted, empty = grounded)."""
+    fields = [graded[key][0] for key in keys]
+    scored = [
+        (f, weights.get(f.field, _DEFAULT_WEIGHT))
+        for f in fields
+        if not (f.status == "grounded" and not f.unsupported_claims and f.confidence == 1.0)
+    ]
+    if scored:
+        total_weight = sum(w for _, w in scored)
+        overall_confidence = sum(f.confidence * w for f, w in scored) / total_weight
+        overall_status = min(
+            (f.status for f, _ in scored), key=lambda s: _STATUS_RANK[s]
+        )
+    else:
+        overall_confidence = 1.0
+        overall_status = "grounded"
 
-    Layer 1 (rules) always runs. Layer 2 (LLM) runs only when
-    ``GROUNDING_USE_LLM`` is set, is scoped to ``GROUNDING_LLM_FIELDS``, can only
-    *downgrade* a verdict, and degrades to the rules result on any error.
+    logger.info(
+        "[GROUNDING] status=%s confidence=%.2f flagged_fields=%d checked_with=%s",
+        overall_status,
+        overall_confidence,
+        sum(1 for f in fields if f.unsupported_claims),
+        checked_with,
+    )
+
+    return GroundingResult(
+        status=overall_status,
+        confidence=round(overall_confidence, 3),
+        fields=fields,
+        checked_with=checked_with,
+        cross_lingual=cross_lingual,
+    )
+
+
+def _valid_citation_indices(
+    all_claims: list[GroundingClaim], line_map: dict[int, str]
+) -> list[int]:
+    """Indices of claims that cite at least one real transcript line."""
+    return [
+        i
+        for i, c in enumerate(all_claims)
+        if any(n in line_map for n in c.cited_lines)
+    ]
+
+
+def _apply_cross_lingual(
+    all_claims: list[GroundingClaim],
+    verdicts: dict[int, tuple[GroundingStatus, str | None]],
+    line_map: dict[int, str],
+) -> list[GroundingClaim]:
+    """Build the cross-lingual claim list from the LLM's *authoritative* verdicts.
+
+    Lexical overlap is meaningless across languages, so we ignore the rules
+    status and trust the LLM. Claims with no valid citation stay ungrounded
+    (citation failure is language-agnostic); claims the LLM didn't rule on are
+    flagged ``partial`` for manual review rather than rubber-stamped.
+    """
+    rebuilt: list[GroundingClaim] = []
+    for i, claim in enumerate(all_claims):
+        has_valid = any(n in line_map for n in claim.cited_lines)
+        if not has_valid:
+            status: GroundingStatus = "ungrounded"
+            conf = 0.0
+            issue: str | None = (
+                "No cited transcript lines."
+                if not claim.cited_lines
+                else "Citations point to lines not in the transcript."
+            )
+        elif i in verdicts:
+            status, reason = verdicts[i]
+            conf = _LLM_CONF_PROXY[status]
+            issue = (
+                None
+                if status == "grounded"
+                else reason
+                or "LLM verifier judged the cited lines do not fully support this statement."
+            )
+        else:
+            status = "partial"
+            conf = 0.5
+            issue = "Cross-lingual claim not verified by the LLM — manual review needed."
+        rebuilt.append(
+            GroundingClaim(
+                field=claim.field,
+                text=claim.text,
+                status=status,
+                confidence=round(conf, 3),
+                cited_lines=claim.cited_lines,
+                issue=issue,
+            )
+        )
+    return rebuilt
+
+
+def _degrade_cross_lingual(all_claims: list[GroundingClaim]) -> list[GroundingClaim]:
+    """LLM unavailable for a cross-lingual note: we can't verify by word overlap,
+    so flag every non-trivial claim for manual review (never silently pass)."""
+    rebuilt: list[GroundingClaim] = []
+    for claim in all_claims:
+        rebuilt.append(
+            GroundingClaim(
+                field=claim.field,
+                text=claim.text,
+                status="partial",
+                confidence=0.5,
+                cited_lines=claim.cited_lines,
+                issue="Cross-lingual note: automatic grounding unavailable — manual review needed.",
+            )
+        )
+    return rebuilt
+
+
+async def _verify_cross_lingual(
+    keys: tuple[str, ...],
+    sections: dict[str, Any],
+    weights: dict[str, float],
+    line_map: dict[int, str],
+) -> GroundingResult:
+    """Cross-lingual grounding: the LLM verifier is the authoritative judge.
+
+    Word-overlap can't compare a note and transcript in different languages, so
+    we re-grade each field's claims with the LLM. If the LLM is disabled or
+    fails, we degrade to "needs manual review" rather than trust lexical scores.
+    """
+    graded = {
+        key: _grade_field(key, _section_field(sections, key), line_map)
+        for key in keys
+    }
+    checked_with: GroundingCheckedWith = "llm-crosslingual"
+    llm_available = bool(settings.GROUNDING_CROSS_LINGUAL and settings.GROQ_API_KEY)
+
+    for key in keys:
+        field_result, all_claims = graded[key]
+        if not all_claims:
+            continue
+        if not llm_available:
+            rebuilt = _degrade_cross_lingual(all_claims)
+            checked_with = "crosslingual-unverified"
+        else:
+            indices = _valid_citation_indices(all_claims, line_map)
+            try:
+                verdicts = await _llm_verify_indexed(key, all_claims, line_map, indices)
+            except Exception:  # noqa: BLE001 — verifier must never break the gate
+                logger.exception(
+                    "[GROUNDING] cross-lingual LLM verify failed for %s — flagging for review",
+                    key,
+                )
+                rebuilt = _degrade_cross_lingual(all_claims)
+                checked_with = "crosslingual-unverified"
+            else:
+                rebuilt = _apply_cross_lingual(all_claims, verdicts, line_map)
+        graded[key] = (
+            _field_result_from_claims(key, rebuilt, field_result.cited_lines_valid),
+            rebuilt,
+        )
+
+    return _assemble_result(keys, graded, weights, checked_with, cross_lingual=True)
+
+
+async def verify(
+    soap_note: Any,
+    transcript: list[Any],
+    *,
+    note_language: str | None = None,
+    transcript_language: str | None = None,
+) -> GroundingResult:
+    """Return a grounding verdict for a note against its transcript.
+
+    Same-language (the default): Layer 1 (rules) always runs; Layer 2 (LLM) runs
+    only when ``GROUNDING_USE_LLM`` is set, scoped to ``GROUNDING_LLM_FIELDS``,
+    can only *downgrade*, and degrades to rules on any error.
+
+    Cross-lingual (``note_language`` != ``transcript_language``): word-overlap is
+    invalid, so the LLM verifier becomes authoritative over all cited claims
+    (auto-enabled), degrading to "manual review" if the LLM is unavailable.
     """
     note_type, sections = _note_meta(soap_note)
     keys = tuple(_template_section_keys(note_type))
     weights = _template_weights(note_type)
     line_map = _transcript_line_map(transcript or [])
+
+    if is_cross_lingual(note_language, transcript_language):
+        return await _verify_cross_lingual(keys, sections, weights, line_map)
+
     graded = {
         key: _grade_field(key, _section_field(sections, key), line_map)
         for key in keys
     }
 
-    checked_with: Literal["rules", "rules+llm"] = "rules"
+    checked_with: GroundingCheckedWith = "rules"
     if settings.GROUNDING_USE_LLM:
         llm_fields = _llm_field_set(keys)
         for key in keys:
@@ -373,34 +569,4 @@ async def verify(soap_note: Any, transcript: list[Any]) -> GroundingResult:
             )
             checked_with = "rules+llm"
 
-    fields = [graded[key][0] for key in keys]
-
-    # Overall score weights non-empty fields; an empty note is trivially grounded.
-    scored = [
-        (f, weights.get(f.field, _DEFAULT_WEIGHT))
-        for f in fields
-        if not (f.status == "grounded" and not f.unsupported_claims and f.confidence == 1.0)
-    ]
-    if scored:
-        total_weight = sum(w for _, w in scored)
-        overall_confidence = sum(f.confidence * w for f, w in scored) / total_weight
-        overall_status = min(
-            (f.status for f, _ in scored), key=lambda s: _STATUS_RANK[s]
-        )
-    else:
-        overall_confidence = 1.0
-        overall_status = "grounded"
-
-    logger.info(
-        "[GROUNDING] status=%s confidence=%.2f flagged_fields=%d",
-        overall_status,
-        overall_confidence,
-        sum(1 for f in fields if f.unsupported_claims),
-    )
-
-    return GroundingResult(
-        status=overall_status,
-        confidence=round(overall_confidence, 3),
-        fields=fields,
-        checked_with=checked_with,
-    )
+    return _assemble_result(keys, graded, weights, checked_with, cross_lingual=False)

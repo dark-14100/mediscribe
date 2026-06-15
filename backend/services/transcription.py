@@ -157,10 +157,11 @@ async def _whisper_segments(
     content_type: str = "audio/webm",
     timeout: float = 120.0,
     language: str | None = None,
-) -> list[dict]:
-    """Run Groq Whisper on raw bytes and return its raw (undiarized) segments.
+) -> tuple[list[dict], str | None]:
+    """Run Groq Whisper on raw bytes; return ``(raw segments, detected language)``.
 
-    ``language`` is an optional ISO-639-1 hint; when omitted Whisper auto-detects.
+    ``language`` is an optional ISO-639-1 hint; when omitted Whisper auto-detects
+    and reports the language it heard (used to drive cross-lingual grounding).
     """
     temp_dir: str | None = None
     try:
@@ -202,7 +203,9 @@ async def _whisper_segments(
             full_text = (payload.get("text") or "").strip()
             if full_text:
                 segments = [{"text": full_text}]
-        return segments
+        detected = payload.get("language")
+        detected = str(detected).strip().lower() if detected else None
+        return segments, detected
     finally:
         if temp_dir is not None:
             shutil.rmtree(temp_dir, ignore_errors=True)
@@ -214,8 +217,8 @@ async def _call_groq_whisper(
     filename: str = "audio.webm",
     content_type: str = "audio/webm",
     language: str | None = None,
-) -> list[dict[str, str | int]]:
-    segments = await _whisper_segments(
+) -> tuple[list[dict[str, str | int]], str | None]:
+    segments, detected = await _whisper_segments(
         audio_bytes, filename=filename, content_type=content_type, language=language
     )
     if not segments:
@@ -224,7 +227,7 @@ async def _call_groq_whisper(
     transcript = await _format_transcript(segments)
     if not transcript:
         raise ValueError("No non-empty transcription segments")
-    return transcript
+    return transcript, detected
 
 
 # ---------------------------------------------------------------------------
@@ -237,17 +240,33 @@ async def transcribe(
     """Pipeline entry point: diarised transcript lines from raw audio bytes.
 
     ``language`` is an optional ISO-639-1 hint; when omitted Whisper auto-detects.
+    Backward-compatible: returns just the lines. Use ``transcribe_detect`` when
+    you also need Whisper's detected spoken language (for cross-lingual grounding).
+    """
+    lines, _detected = await transcribe_detect(audio_bytes, language=language)
+    return lines
+
+
+async def transcribe_detect(
+    audio_bytes: bytes, language: str | None = None
+) -> tuple[list[dict[str, str | int]], str | None]:
+    """Like ``transcribe`` but also returns Whisper's detected spoken language.
+
+    The detected language (e.g. ``"es"``) lets the pipeline decide whether the
+    note is cross-lingual (note language != spoken language) and switch grounding
+    to the LLM-authoritative path accordingly.
     """
     logger.info("[TRANSCRIPTION] Starting transcription")
     if not audio_bytes:
         raise ValueError("Audio file is empty")
     try:
-        transcript = await _call_groq_whisper(audio_bytes, language=language)
+        transcript, detected = await _call_groq_whisper(audio_bytes, language=language)
         logger.info(
-            "[TRANSCRIPTION] Transcription successful (%d lines)",
+            "[TRANSCRIPTION] Transcription successful (%d lines, detected=%s)",
             len(transcript),
+            detected,
         )
-        return transcript
+        return transcript, detected
     except Exception:
         logger.exception("[TRANSCRIPTION] Transcription failed")
         raise
@@ -265,7 +284,7 @@ async def transcribe_partial(audio_bytes: bytes) -> str:
     if not audio_bytes:
         return ""
     try:
-        segments = await _whisper_segments(audio_bytes, timeout=45.0)
+        segments, _detected = await _whisper_segments(audio_bytes, timeout=45.0)
     except Exception:
         logger.warning("[TRANSCRIPTION] partial transcription failed", exc_info=True)
         return ""
@@ -275,9 +294,9 @@ async def transcribe_partial(audio_bytes: bytes) -> str:
 
 async def transcribe_audio(file: UploadFile) -> dict:
     contents = await file.read()
-    transcript = await _call_groq_whisper(
+    transcript, detected = await _call_groq_whisper(
         contents,
         filename=file.filename or "audio.webm",
         content_type=file.content_type or "audio/webm",
     )
-    return {"transcript": transcript}
+    return {"transcript": transcript, "language": detected}

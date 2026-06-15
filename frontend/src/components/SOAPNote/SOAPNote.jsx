@@ -64,6 +64,20 @@ export default function SOAPNote({
             {overallPct}% verified
           </span>
         ) : null}
+        {grounding?.cross_lingual ? (
+          <span
+            className="soap-note__grounding soap-note__grounding--xlingual"
+            title={
+              grounding.checked_with === 'crosslingual-unverified'
+                ? 'Note and conversation are in different languages and could not be auto-verified — please review.'
+                : 'Note and conversation are in different languages; verified by AI meaning-matching.'
+            }
+          >
+            {grounding.checked_with === 'crosslingual-unverified'
+              ? 'Cross-language · review'
+              : 'Cross-language ✓'}
+          </span>
+        ) : null}
       </div>
       <div className="soap-note__fields">
         {FIELDS.map(({ key, label }) => {

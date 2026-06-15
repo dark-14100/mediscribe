@@ -47,6 +47,10 @@ class Visit(Base):
         String(16), nullable=False, default="en", server_default="en"
     )
 
+    # BCP-47 language actually spoken (Whisper-detected). Null until transcribed.
+    # When it differs from `language`, grounding runs cross-lingual (LLM-led).
+    transcript_language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+
     # Note output + audit. The column name stays `soap_note` for back-compat, but
     # it holds the flat {section_key: {text, source_lines}} map for any note type.
     soap_note: Mapped[dict[str, Any]] = mapped_column(

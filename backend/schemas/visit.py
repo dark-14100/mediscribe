@@ -84,6 +84,7 @@ class VisitRead(BaseModel):
 
     note_type: str = "soap"
     language: str = "en"
+    transcript_language: str | None = None
     soap_note: dict[str, Any] = Field(default_factory=dict)
     soap_audit_trail: dict[str, Any] = Field(default_factory=dict)
 

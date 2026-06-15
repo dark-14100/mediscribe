@@ -94,6 +94,26 @@ def test_report_contains_no_phi():
     assert "555-123-4567" not in blob
 
 
+def test_localized_month_dates_are_scrubbed():
+    # Phase B: date redaction works in the spoken language (here Spanish), with
+    # connector words ("de"). Name/numeric scrubs are already language-agnostic.
+    tr = [_line("Nacido el 15 de enero de 1980")]
+    result = deidentify_transcript(tr, _patient(full_name="Nobody"), language="es")
+    clean = _clean_text(result)
+    assert "enero" not in clean
+    assert "1980" not in clean
+    assert "[DATE_1]" in clean
+
+
+def test_english_dates_still_scrubbed_with_localized_pattern():
+    # English month dates must keep working regardless of the language hint.
+    tr = [_line("Born January 15, 1980")]
+    result = deidentify_transcript(tr, _patient(full_name="Nobody"), language="es")
+    clean = _clean_text(result)
+    assert "January" not in clean
+    assert "[DATE_1]" in clean
+
+
 def test_reidentify_deep_walks_structures():
     tr = [_line("Jane Doe has a fever")]
     result = deidentify_transcript(tr, _patient())

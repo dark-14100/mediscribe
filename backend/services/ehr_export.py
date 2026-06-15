@@ -73,9 +73,14 @@ def _human_name(full_name: str | None) -> dict[str, Any]:
     return {"use": "official", "text": text}
 
 
-def assemble_note_text(note_type: str, sections: dict[str, Any]) -> str:
-    """Render the note's sections (in template order) into labelled plain text."""
-    labels = section_labels(note_type)
+def assemble_note_text(
+    note_type: str, sections: dict[str, Any], language: str | None = None
+) -> str:
+    """Render the note's sections (in template order) into labelled plain text.
+
+    When ``language`` has localized section labels, the headers are translated to
+    match the note body (English headers otherwise)."""
+    labels = section_labels(note_type, language)
     blocks: list[str] = []
     for key in section_keys(note_type):
         field = sections.get(key) or {}
@@ -100,7 +105,7 @@ def build_document_reference(
     code, display = loinc(note_type)
     when = (signed_at or datetime.now(timezone.utc)).astimezone(timezone.utc)
     when_iso = when.isoformat()
-    note_text = assemble_note_text(note_type, sections)
+    note_text = assemble_note_text(note_type, sections, language)
     encoded = base64.b64encode(note_text.encode("utf-8")).decode("ascii")
     doc_title = title or f"{display} — {when.date().isoformat()}"
     attachment: dict[str, Any] = {
@@ -245,7 +250,7 @@ async def export_note(
     Returns ``{document_reference_id, patient_fhir_id, fhir_base_url}`` on success
     and raises ``EhrExportError`` (user-safe message) on failure.
     """
-    if not assemble_note_text(note_type, sections):
+    if not assemble_note_text(note_type, sections, language):
         raise EhrExportError("The note is empty; nothing to file.")
 
     base = _require_config()

@@ -136,6 +136,48 @@ NOTE_TEMPLATES: Final[dict[str, dict]] = {
 }
 
 
+# Localized section labels for filed documents (EHR DocumentReference body).
+# Keyed by language -> section_key -> label. Missing languages/keys fall back to
+# the English label in the template. Coverage grows over time; only confident,
+# standard clinical translations are included.
+SECTION_LABEL_TRANSLATIONS: Final[dict[str, dict[str, str]]] = {
+    "es": {
+        "subjective": "Subjetivo",
+        "objective": "Objetivo",
+        "assessment": "Evaluación",
+        "plan": "Plan",
+        "chief_complaint": "Motivo de consulta",
+        "hpi": "Historia de la enfermedad actual",
+        "pmh": "Antecedentes médicos",
+        "ros": "Revisión por sistemas",
+        "exam": "Exploración física",
+        "interval_history": "Historia del intervalo",
+        "admission_dx": "Diagnóstico de ingreso",
+        "discharge_dx": "Diagnóstico de alta",
+        "hospital_course": "Evolución hospitalaria",
+        "discharge_meds": "Medicación al alta",
+        "followup": "Instrucciones de seguimiento",
+    },
+    "fr": {
+        "subjective": "Subjectif",
+        "objective": "Objectif",
+        "assessment": "Évaluation",
+        "plan": "Plan",
+        "chief_complaint": "Motif de consultation",
+        "hpi": "Histoire de la maladie actuelle",
+        "pmh": "Antécédents médicaux",
+        "ros": "Revue des systèmes",
+        "exam": "Examen physique",
+        "interval_history": "Histoire de l'intervalle",
+        "admission_dx": "Diagnostic d'admission",
+        "discharge_dx": "Diagnostic de sortie",
+        "hospital_course": "Évolution hospitalière",
+        "discharge_meds": "Médicaments à la sortie",
+        "followup": "Instructions de suivi",
+    },
+}
+
+
 def normalize_note_type(note_type: str | None) -> str:
     """Return a known note-type key, falling back to the default."""
     key = (note_type or "").strip().lower()
@@ -150,8 +192,17 @@ def section_keys(note_type: str | None) -> list[str]:
     return [key for key, _ in get_template(note_type)["sections"]]
 
 
-def section_labels(note_type: str | None) -> dict[str, str]:
-    return {key: label for key, label in get_template(note_type)["sections"]}
+def section_labels(note_type: str | None, language: str | None = None) -> dict[str, str]:
+    """{section_key: label}. When ``language`` has translations, localized labels
+    are returned (English labels for any untranslated key); else English."""
+    base = {key: label for key, label in get_template(note_type)["sections"]}
+    if not language:
+        return base
+    code = (language or "").strip().lower().split("-", 1)[0]
+    overrides = SECTION_LABEL_TRANSLATIONS.get(code)
+    if not overrides:
+        return base
+    return {key: overrides.get(key, label) for key, label in base.items()}
 
 
 def grounding_weights(note_type: str | None) -> dict[str, float]:

@@ -71,6 +71,16 @@ def test_build_document_reference_sets_attachment_language():
     assert doc["content"][0]["attachment"]["language"] == "es"
 
 
+def test_assemble_note_text_localizes_headers():
+    from services.ehr_export import assemble_note_text
+
+    sections = {"subjective": {"text": "Dolor de cabeza."}}
+    en = assemble_note_text("soap", sections)
+    assert en.startswith("Subjective:")
+    es = assemble_note_text("soap", sections, "es")
+    assert es.startswith("Subjetivo:")
+
+
 def test_assemble_note_text_skips_empty_sections_and_orders_by_template():
     from services.ehr_export import assemble_note_text
 

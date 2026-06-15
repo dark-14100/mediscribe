@@ -67,7 +67,7 @@ from schemas.pipeline import (
     TrajectoryResult,
     TranscribeResponse,
 )
-from core.languages import normalize_language
+from core.languages import canonical_language, normalize_language
 from core.note_templates import normalize_note_type
 from services.deid import count_residual, reidentify
 from core.audit import log_phi_access
@@ -296,17 +296,25 @@ async def transcribe(
             detail="GROQ_API_KEY is not configured on the server.",
         )
 
-    transcribe_fn = _require(
+    # Prefer transcribe_detect (returns Whisper's detected spoken language too)
+    # and fall back to the legacy transcribe (lines only) for back-compat/tests.
+    detect_fn = _resolve("services.transcription", "transcribe_detect")
+    transcribe_fn = detect_fn or _require(
         _resolve("services.transcription", "transcribe"),
         "Transcription service",
     )
-    # Optional ASR language hint: when we know the visit's language and the hint
-    # is enabled, tell Whisper rather than relying on auto-detect.
+    # Optional ASR language hint: when we know the visit's note language and the
+    # hint is enabled, nudge Whisper rather than relying on pure auto-detect.
     lang_hint: str | None = None
     if visit is not None and settings.WHISPER_LANGUAGE_HINT:
         lang_hint = normalize_language(getattr(visit, "language", None))
+    detected_language: str | None = None
     try:
-        transcript = await transcribe_fn(audio_bytes, language=lang_hint)
+        result = await transcribe_fn(audio_bytes, language=lang_hint)
+        if detect_fn is not None:
+            transcript, detected_language = result
+        else:
+            transcript = result
     except Exception as exc:
         # Log the upstream detail server-side; return a generic message so we
         # don't leak provider/internal error text to the client.
@@ -326,6 +334,20 @@ async def transcribe(
     # raw audio (PHI) through the Celery/Redis broker, where it would sit
     # base64-encoded in an unencrypted queue. Archiving failures must not fail
     # the transcription, so we degrade to audio_upload_queued=False instead.
+    # Persist the detected spoken language so /run can decide cross-lingual
+    # grounding (note language != spoken language). Best-effort; never fatal.
+    if visit is not None and detected_language:
+        try:
+            visit.transcript_language = canonical_language(detected_language)
+            await db.commit()
+        except Exception as exc:  # noqa: BLE001
+            await db.rollback()
+            log.warning(
+                "[pipeline] persisting transcript_language failed visit_id=%s: %s",
+                visit.id,
+                exc,
+            )
+
     audio_upload_queued = False
     if visit is not None:
         try:
@@ -466,6 +488,12 @@ async def _run_pipeline(
     )
     visit.language = language
 
+    # The spoken language (Whisper-detected at /transcribe). When it differs from
+    # the note language the grounding gate goes cross-lingual (LLM-authoritative).
+    transcript_language = (
+        canonical_language(getattr(visit, "transcript_language", None)) or language
+    )
+
     # --- Step 1.5: De-identify before any LLM sees the text --------------
     # Replace PHI with reversible placeholders; the whole LLM portion runs on
     # the clean copy, and every output is re-identified at the boundaries.
@@ -477,6 +505,7 @@ async def _run_pipeline(
             deid_fn,
             payload.transcript,
             patient,
+            transcript_language,
             default=None,
             label="deid",
             degraded=degraded_steps,
@@ -556,6 +585,8 @@ async def _run_pipeline(
             default=None,
             label="grounding",
             degraded=degraded_steps,
+            note_language=language,
+            transcript_language=transcript_language,
         )
         await bus.publish(
             visit_id_str,
