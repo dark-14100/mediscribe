@@ -36,7 +36,13 @@ class Visit(Base):
     raw_transcript: Mapped[str | None] = mapped_column(Text, nullable=True)
     audio_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
 
-    # SOAP output + audit
+    # Note type (soap | hp | progress | discharge) — drives the section template.
+    note_type: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="soap", server_default="soap"
+    )
+
+    # Note output + audit. The column name stays `soap_note` for back-compat, but
+    # it holds the flat {section_key: {text, source_lines}} map for any note type.
     soap_note: Mapped[dict[str, Any]] = mapped_column(
         jsonb_type(), nullable=False, default=dict
     )

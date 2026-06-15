@@ -89,6 +89,46 @@ async def test_save_note_persists_coding_decisions(client, doctor_user):
 
 
 @pytest.mark.asyncio
+async def test_save_note_persists_hp_note_sections(client, doctor_user):
+    """A non-SOAP note type round-trips its own sections + note_type."""
+    pr = await client.post(
+        "/patients", json=_PATIENT_PAYLOAD, headers=auth_header(doctor_user)
+    )
+    pid = pr.json()["id"]
+    vr = await client.post(
+        "/visits",
+        json={"patient_id": pid, "note_type": "hp"},
+        headers=auth_header(doctor_user),
+    )
+    assert vr.json()["note_type"] == "hp"
+    vid = vr.json()["id"]
+
+    body = {
+        "note_type": "hp",
+        "note_sections": {
+            "chief_complaint": {"text": "Headache", "source_lines": [1]},
+            "hpi": {"text": "Three days, throbbing", "source_lines": [2]},
+            "assessment": {"text": "Tension headache", "source_lines": [4]},
+            "plan": {"text": "Ibuprofen", "source_lines": [5]},
+        },
+        "doctor_modified_fields": ["assessment"],
+    }
+    resp = await client.post(
+        f"/notes/save/{vid}", json=body, headers=auth_header(doctor_user)
+    )
+    assert resp.status_code == 200
+    saved = resp.json()
+    assert saved["note_type"] == "hp"
+    assert saved["soap_note"]["chief_complaint"]["text"] == "Headache"
+    assert saved["soap_note"]["hpi"]["text"] == "Three days, throbbing"
+
+    # Reload confirms the note type and sections survived persistence.
+    fetched = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    assert fetched.json()["note_type"] == "hp"
+    assert fetched.json()["soap_note"]["assessment"]["text"] == "Tension headache"
+
+
+@pytest.mark.asyncio
 async def test_save_note_rejects_invalid_code_system(client, doctor_user):
     """An unknown code system is rejected by schema validation (422)."""
     _, vid = await _create_patient_and_visit(client, doctor_user)

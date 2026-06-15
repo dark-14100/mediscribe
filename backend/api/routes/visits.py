@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import get_current_user, require_doctor
 from core.constants import ADMIN_ROLE
+from core.note_templates import normalize_note_type
 from db.session import get_db
 from models.patient import Patient
 from models.user import User
@@ -73,6 +74,7 @@ async def create_visit(
     visit = Visit(
         patient_id=payload.patient_id,
         doctor_id=user.id,
+        note_type=normalize_note_type(payload.note_type),
     )
     db.add(visit)
 

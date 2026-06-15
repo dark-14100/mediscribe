@@ -11,11 +11,12 @@ from schemas.coercion import (
     coerce_optional_json_dict,
     coerce_str_list,
 )
-from schemas.pipeline import CodingDecisions, SOAPNote
+from schemas.pipeline import CodingDecisions, SOAPField, SOAPNote
 
 
 class VisitCreate(BaseModel):
     patient_id: uuid.UUID
+    note_type: str = "soap"
 
 
 class RecentVisitRead(BaseModel):
@@ -34,9 +35,16 @@ class RecentVisitRead(BaseModel):
 
 
 class NoteSaveRequest(BaseModel):
-    """Body of POST /notes/save — the (possibly doctor-edited) SOAP note."""
+    """Body of POST /notes/save — the (possibly doctor-edited) note.
 
-    soap_note: SOAPNote
+    ``soap_note`` remains for SOAP callers/back-compat. For non-SOAP note types
+    the editor sends the real sections in ``note_sections`` + ``note_type``;
+    when present these take precedence for persistence.
+    """
+
+    soap_note: SOAPNote | None = None
+    note_type: str = "soap"
+    note_sections: dict[str, SOAPField] | None = None
     soap_audit_trail: dict[str, Any] = Field(default_factory=dict)
     doctor_modified_fields: list[str] = Field(default_factory=list)
     # Phase B coding: the doctor's confirm/edit/dismiss choices over suggested
@@ -73,6 +81,7 @@ class VisitRead(BaseModel):
     raw_transcript: str | None = None
     audio_url: str | None = None
 
+    note_type: str = "soap"
     soap_note: dict[str, Any] = Field(default_factory=dict)
     soap_audit_trail: dict[str, Any] = Field(default_factory=dict)
 

@@ -26,6 +26,12 @@ import {
 } from '../../lib/api.js';
 import { connectSSE } from '../../lib/sse.js';
 import {
+  emptyNote,
+  noteTypeChoices,
+  normalizeNoteType,
+  sectionKeys,
+} from '../../lib/noteTemplates.js';
+import {
   getInitialTrajectory,
   getSessionPatient,
   parseSSEData,
@@ -37,15 +43,6 @@ import {
   mapVisitToTrajectory,
 } from '../../lib/sessionPatient.js';
 import './SessionPage.css';
-
-const SOAP_FIELD_ORDER = ['subjective', 'objective', 'assessment', 'plan'];
-
-const EMPTY_SOAP = {
-  subjective: '',
-  objective: '',
-  assessment: '',
-  plan: '',
-};
 
 // Human-readable names for the backend's `degraded_steps` labels, so the
 // "partial note" banner reads in clinician language rather than code symbols.
@@ -68,15 +65,15 @@ function degradedLabel(step) {
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-function normalizeSoap(payload) {
-  const note = payload?.soap_note ?? payload;
+function normalizeSoap(payload, noteType) {
+  // Accept a ClinicalNote ({sections}), a flat sections dict, or a raw SSE dict.
+  const note = payload?.note?.sections ?? payload?.soap_note ?? payload;
   if (!note) return null;
-  return {
-    subjective: note.subjective?.text ?? note.subjective ?? '',
-    objective: note.objective?.text ?? note.objective ?? '',
-    assessment: note.assessment?.text ?? note.assessment ?? '',
-    plan: note.plan?.text ?? note.plan ?? '',
-  };
+  const out = {};
+  for (const key of sectionKeys(noteType)) {
+    out[key] = note[key]?.text ?? note[key] ?? '';
+  }
+  return out;
 }
 
 // Parse a stored `raw_transcript` string (`[doctor] hello\n[patient] hi`) back
@@ -93,15 +90,15 @@ function parseRawTranscript(raw) {
     .filter(Boolean);
 }
 
-function soapToRequest(soap, doctorModifiedFields, codingDecisions) {
+function soapToRequest(soap, doctorModifiedFields, codingDecisions, noteType) {
   const toField = (text) => ({ text: text ?? '', source_lines: [] });
+  const note_sections = {};
+  for (const key of sectionKeys(noteType)) {
+    note_sections[key] = toField(soap[key]);
+  }
   const body = {
-    soap_note: {
-      subjective: toField(soap.subjective),
-      objective: toField(soap.objective),
-      assessment: toField(soap.assessment),
-      plan: toField(soap.plan),
-    },
+    note_type: normalizeNoteType(noteType),
+    note_sections,
     doctor_modified_fields: [...doctorModifiedFields],
   };
   if (codingDecisions) {
@@ -110,8 +107,8 @@ function soapToRequest(soap, doctorModifiedFields, codingDecisions) {
   return body;
 }
 
-function staggerSoapFields(setVisibleFields, setSoap, soapData) {
-  SOAP_FIELD_ORDER.forEach((field, index) => {
+function staggerSoapFields(setVisibleFields, setSoap, soapData, noteType) {
+  sectionKeys(noteType).forEach((field, index) => {
     setTimeout(() => {
       setVisibleFields((prev) => new Set([...prev, field]));
       setSoap((prev) => ({ ...prev, [field]: soapData[field] }));
@@ -141,7 +138,8 @@ export default function SessionPage() {
   const [transcriptError, setTranscriptError] = useState(null);
 
   const [transcript, setTranscript] = useState([]);
-  const [soap, setSoap] = useState(EMPTY_SOAP);
+  const [noteType, setNoteType] = useState('soap');
+  const [soap, setSoap] = useState(() => emptyNote('soap'));
   const [visibleFields, setVisibleFields] = useState(() => new Set());
   const [doctorModifiedFields, setDoctorModifiedFields] = useState(() => new Set());
 
@@ -172,14 +170,20 @@ export default function SessionPage() {
   const [signAck, setSignAck] = useState(false);
   const [signNeedsAck, setSignNeedsAck] = useState(false);
   const sseRef = useRef(null);
+  // The SSE handlers below are created once; read the live note type via a ref.
+  const noteTypeRef = useRef('soap');
+  useEffect(() => {
+    noteTypeRef.current = noteType;
+  }, [noteType]);
 
   // ── SSE event handlers ───────────────────────────────────────────────────
 
   const sseHandlers = useRef({
     soap_ready(event) {
       const data = parseSSEData(event);
-      const normalized = normalizeSoap(data);
-      if (normalized) staggerSoapFields(setVisibleFields, setSoap, normalized);
+      const nt = noteTypeRef.current;
+      const normalized = normalizeSoap(data, nt);
+      if (normalized) staggerSoapFields(setVisibleFields, setSoap, normalized, nt);
     },
     grounding_ready(event) {
       const data = parseSSEData(event);
@@ -269,10 +273,15 @@ export default function SessionPage() {
         const traj = mapVisitToTrajectory(visit, summary);
         setTrajectory(traj);
 
-        const existingSoap = normalizeSoap({ soap_note: visit.soap_note });
+        const existingNoteType = normalizeNoteType(visit.note_type);
+        setNoteType(existingNoteType);
+        const existingSoap = normalizeSoap(
+          { soap_note: visit.soap_note },
+          existingNoteType,
+        );
         if (existingSoap) {
           setSoap(existingSoap);
-          setVisibleFields(new Set(SOAP_FIELD_ORDER));
+          setVisibleFields(new Set(sectionKeys(existingNoteType)));
         }
 
         const existingTranscript = parseRawTranscript(visit.raw_transcript);
@@ -361,10 +370,12 @@ export default function SessionPage() {
       try {
         const res = await apiFetch(`/pipeline/run-status/${visitId}`);
         const p = await res.json();
-        const soapNorm = normalizeSoap({ soap_note: p.soap_note });
+        const recoveredType = normalizeNoteType(p.note_type);
+        setNoteType(recoveredType);
+        const soapNorm = normalizeSoap(p, recoveredType);
         if (soapNorm) {
           setSoap(soapNorm);
-          setVisibleFields(new Set(SOAP_FIELD_ORDER));
+          setVisibleFields(new Set(sectionKeys(recoveredType)));
         }
         if (p.anomalies?.length) setAnomalies(p.anomalies);
         if (p.differentials?.length) setDifferentials(p.differentials);
@@ -438,7 +449,11 @@ export default function SessionPage() {
         const res = await apiFetch('/pipeline/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ visit_id: visitId, transcript: lines }),
+          body: JSON.stringify({
+            visit_id: visitId,
+            transcript: lines,
+            note_type: noteTypeRef.current,
+          }),
         });
         // SSE events drive the live UI; pipeline_done flips status to 'done' and
         // carries degraded_steps. We also read the response as a fallback in case
@@ -490,6 +505,16 @@ export default function SessionPage() {
     setHasUnsavedChanges(true);
   }, []);
 
+  // Switch the note format before recording — reshape the (empty) editor to the
+  // new template's sections.
+  const handleNoteTypeChange = useCallback((next) => {
+    const normalized = normalizeNoteType(next);
+    setNoteType(normalized);
+    setSoap(emptyNote(normalized));
+    setVisibleFields(new Set());
+    setDoctorModifiedFields(new Set());
+  }, []);
+
   // Warn before leaving with unsaved edits (covers refresh / tab close).
   useEffect(() => {
     if (!hasUnsavedChanges) return undefined;
@@ -509,9 +534,9 @@ export default function SessionPage() {
       if (flag) {
         setSoap((prev) => {
           const updated = { ...prev };
-          // Search all four fields — not just subjective
-          for (const field of SOAP_FIELD_ORDER) {
-            if (updated[field].includes(flag.phrase)) {
+          // Search every section of the active note type
+          for (const field of sectionKeys(noteTypeRef.current)) {
+            if ((updated[field] || '').includes(flag.phrase)) {
               updated[field] = updated[field].replace(flag.phrase, flag.suggested_rewrite);
               setDoctorModifiedFields((m) => new Set([...m, field]));
               setHasUnsavedChanges(true);
@@ -548,7 +573,9 @@ export default function SessionPage() {
       const res = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields, codingDecisions)),
+        body: JSON.stringify(
+          soapToRequest(soap, doctorModifiedFields, codingDecisions, noteType),
+        ),
       });
       const saved = await res.json();
       applyComplianceFromVisit(saved);
@@ -576,7 +603,9 @@ export default function SessionPage() {
       const saveRes = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields, codingDecisions)),
+        body: JSON.stringify(
+          soapToRequest(soap, doctorModifiedFields, codingDecisions, noteType),
+        ),
       });
       const saved = await saveRes.json();
       applyComplianceFromVisit(saved);
@@ -632,14 +661,15 @@ export default function SessionPage() {
   const canRetry = transcript.length > 0 && pipelineStatus !== 'running' && !isSaving;
 
   const pipelineSteps = useMemo(() => {
-    const soapHasContent = SOAP_FIELD_ORDER.some((f) => (soap[f] || '').trim().length > 0);
+    const keys = sectionKeys(noteType);
+    const soapHasContent = keys.some((f) => (soap[f] || '').trim().length > 0);
     const done = [
       transcript.length > 0,
       anomalies.length > 0 || differentials.length > 0,
-      visibleFields.size >= SOAP_FIELD_ORDER.length || soapHasContent,
+      visibleFields.size >= keys.length || soapHasContent,
       Boolean(compliance),
     ];
-    const labels = ['Transcribe', 'Analyze', 'SOAP note', 'Compliance'];
+    const labels = ['Transcribe', 'Analyze', 'Note', 'Compliance'];
     const running = pipelineStatus === 'running';
     const errored = pipelineStatus === 'error';
     const firstPending = done.findIndex((d) => !d);
@@ -652,7 +682,7 @@ export default function SessionPage() {
       }
       return { label, status };
     });
-  }, [transcript, anomalies, differentials, visibleFields, soap, compliance, pipelineStatus]);
+  }, [transcript, anomalies, differentials, visibleFields, soap, compliance, pipelineStatus, noteType]);
 
   const showStepper =
     pipelineStatus === 'running' ||
@@ -697,6 +727,25 @@ export default function SessionPage() {
             <div className="session-page__trajectory-wrap">
               <TrajectoryCard trajectory={trajectory} />
             </div>
+          </div>
+
+          <div className="session-page__note-type">
+            <label htmlFor="note-type-select" className="session-page__note-type-label">
+              Note type
+            </label>
+            <select
+              id="note-type-select"
+              className="session-page__note-type-select"
+              value={noteType}
+              onChange={(e) => handleNoteTypeChange(e.target.value)}
+              disabled={recorderDisabled || transcript.length > 0 || sessionLoading}
+            >
+              {noteTypeChoices().map(({ key, label }) => (
+                <option key={key} value={key}>
+                  {label}
+                </option>
+              ))}
+            </select>
           </div>
 
           <AudioRecorder
@@ -774,6 +823,7 @@ export default function SessionPage() {
 
           <SOAPNote
             soap={soap}
+            noteType={noteType}
             visibleFields={visibleFields}
             modifiedFields={doctorModifiedFields}
             onChange={isSigned ? undefined : handleSoapChange}

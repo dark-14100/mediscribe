@@ -15,9 +15,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import require_doctor
 from core.config import settings
+from core.note_templates import normalize_note_type
 from db.session import get_db
 from models.user import User
 from models.visit import Visit
+from schemas.pipeline import ClinicalNote
 from schemas.visit import (
     NoteSaveRequest,
     NoteSignRequest,
@@ -78,7 +80,19 @@ async def save_note(
             detail="Note is already signed and cannot be modified",
         )
 
-    visit.soap_note = payload.soap_note.model_dump(mode="json")
+    # Resolve the note body + type. Non-SOAP editors send `note_sections` +
+    # `note_type`; SOAP callers send `soap_note`. Persist the flat sections dict.
+    note_type = normalize_note_type(payload.note_type)
+    if payload.note_sections is not None:
+        sections = {k: v.model_dump(mode="json") for k, v in payload.note_sections.items()}
+    elif payload.soap_note is not None:
+        sections = payload.soap_note.model_dump(mode="json")
+    else:
+        sections = {}
+    visit.note_type = note_type
+    visit.soap_note = sections
+    # SOAP projection of whatever was saved, for the compliance recheck below.
+    soap_for_checks = ClinicalNote.from_sections(note_type, sections).to_soap()
     if payload.soap_audit_trail:
         visit.soap_audit_trail = payload.soap_audit_trail
     if payload.doctor_modified_fields:
@@ -96,7 +110,7 @@ async def save_note(
         visit.soap_audit_trail = trail
 
     try:
-        compliance = await compliance_check(payload.soap_note)
+        compliance = await compliance_check(soap_for_checks)
         visit.compliance_status = compliance.status
         visit.compliance_notes = [
             n.model_dump(mode="json") for n in compliance.notes

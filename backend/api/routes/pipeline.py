@@ -56,6 +56,7 @@ from models.user import User
 from models.visit import Visit
 from schemas.pipeline import (
     AudioUrlResponse,
+    ClinicalNote,
     CodingResult,
     DeidReport,
     GroundingResult,
@@ -65,6 +66,7 @@ from schemas.pipeline import (
     TrajectoryResult,
     TranscribeResponse,
 )
+from core.note_templates import normalize_note_type
 from services.deid import count_residual, reidentify
 from core.audit import log_phi_access
 from core.config import settings
@@ -189,6 +191,23 @@ async def _is_first_visit(patient_id: UUID, db: AsyncSession) -> bool:
 def _sse_format(event_name: str, data: dict[str, Any]) -> str:
     """Render a single SSE message frame."""
     return f"event: {event_name}\ndata: {json.dumps(data, default=str)}\n\n"
+
+
+def _coerce_clinical_note(raw: Any, note_type: str) -> ClinicalNote:
+    """Build a ClinicalNote from a generator's output (flat sections dict),
+    a SOAPNote, or None. Tolerant: unparseable input yields an empty note."""
+    if isinstance(raw, ClinicalNote):
+        return raw
+    if isinstance(raw, SOAPNote):
+        note = ClinicalNote.from_soap(raw)
+        note.note_type = note_type
+        return note
+    if isinstance(raw, dict):
+        try:
+            return ClinicalNote.from_sections(note_type, raw)
+        except Exception:  # noqa: BLE001 — degrade to an empty note
+            log.exception("[pipeline] note generator returned unparseable output")
+    return ClinicalNote(note_type=note_type)
 
 
 def _serialise(value: Any) -> Any:
@@ -377,6 +396,13 @@ async def _run_pipeline(
     # client so the doctor knows the note is partial rather than complete.
     degraded_steps: list[str] = []
 
+    # Resolve the note type: a request override wins, else the visit's stored
+    # type, else the default. Persist it so save/sign/reload agree.
+    note_type = normalize_note_type(
+        payload.note_type or getattr(visit, "note_type", None)
+    )
+    visit.note_type = note_type
+
     # --- Step 1.5: De-identify before any LLM sees the text --------------
     # Replace PHI with reversible placeholders; the whole LLM portion runs on
     # the clean copy, and every output is re-identified at the boundaries.
@@ -407,45 +433,51 @@ async def _run_pipeline(
         """Serialize a result then restore real identifiers for display/persist."""
         return reidentify(_serialise(value), deid_map)
 
-    # --- Step 2: SOAP generation -----------------------------------------
-    # NB: the AI team's services/soap_generator.py exposes `generate_soap`,
-    # not `generate`. We fall back to either symbol so the route works with
-    # whichever name they decide to standardise on.
+    # --- Step 2: Note generation (template-aware) ------------------------
+    # The note type (soap | hp | progress | discharge) drives the section
+    # template. `clinical_note` holds the real sections; `soap_note` is its SOAP
+    # projection so the analyst/coding/compliance agents keep working unchanged.
     if soap_blocked:
         log.warning(
-            "[pipeline] DEID enforce: de-id failed — skipping SOAP to avoid "
-            "sending raw PHI to the LLM"
+            "[pipeline] DEID enforce: de-id failed — skipping note generation to "
+            "avoid sending raw PHI to the LLM"
         )
-        soap_note = SOAPNote()
+        clinical_note = ClinicalNote(note_type=note_type)
         if "soap_generator" not in degraded_steps:
             degraded_steps.append("soap_generator")
     else:
-        soap_fn = _require(
-            _resolve("services.soap_generator", "generate_soap")
-            or _resolve("services.soap_generator", "generate"),
-            "SOAP generator",
-        )
-        # SOAP is the one "required" step, but a Groq outage shouldn't block the
-        # doctor entirely: degrade to an empty SOAP skeleton they can fill in
-        # manually instead of failing the whole run.
-        soap_raw: Any = await _maybe_call(
-            soap_fn,
-            clean_transcript,
-            default=SOAPNote(),
-            label="soap_generator",
-            degraded=degraded_steps,
-        )
-        if isinstance(soap_raw, SOAPNote):
-            soap_note = soap_raw
-        else:  # tolerate dict returns; degrade on anything unparseable
-            try:
-                soap_note = SOAPNote.model_validate(soap_raw)
-            except Exception:  # noqa: BLE001
-                log.exception("[pipeline] soap_generator returned unparseable output")
-                soap_note = SOAPNote()
-                if "soap_generator" not in degraded_steps:
-                    degraded_steps.append("soap_generator")
-    await bus.publish(visit_id_str, EVENT_SOAP_READY, _reid(soap_note))
+        # Prefer the template-aware generate_note; fall back to the legacy
+        # generate_soap/generate symbols (SOAP-only) for back-compat.
+        note_fn = _resolve("services.soap_generator", "generate_note")
+        if note_fn is not None:
+            note_raw: Any = await _maybe_call(
+                note_fn,
+                clean_transcript,
+                note_type,
+                default=None,
+                label="soap_generator",
+                degraded=degraded_steps,
+            )
+        else:
+            soap_fn = _require(
+                _resolve("services.soap_generator", "generate_soap")
+                or _resolve("services.soap_generator", "generate"),
+                "SOAP generator",
+            )
+            note_raw = await _maybe_call(
+                soap_fn,
+                clean_transcript,
+                default=None,
+                label="soap_generator",
+                degraded=degraded_steps,
+            )
+        clinical_note = _coerce_clinical_note(note_raw, note_type)
+        if note_raw is None and "soap_generator" not in degraded_steps:
+            degraded_steps.append("soap_generator")
+
+    soap_note = clinical_note.to_soap()
+    section_dump = {k: v.model_dump() for k, v in clinical_note.sections.items()}
+    await bus.publish(visit_id_str, EVENT_SOAP_READY, _reid(section_dump))
 
     # --- Step 2.5: Grounding gate ----------------------------------------
     # Verify each SOAP claim is supported by its cited transcript lines. This is
@@ -455,7 +487,7 @@ async def _run_pipeline(
         grounding_fn = _resolve("services.grounding", "verify")
         grounding_result = await _maybe_call(
             grounding_fn,
-            soap_note,
+            clinical_note,
             clean_transcript,
             default=None,
             label="grounding",
@@ -610,6 +642,9 @@ async def _run_pipeline(
 
     # --- Re-identify outputs for the doctor's view + persistence ---------
     # Everything above ran on de-identified text; restore real identifiers now.
+    # `section_pub` is the real (template-shaped) note body; `soap_note_pub` is its
+    # SOAP projection, kept for the typed payload field + residual counting.
+    section_pub = _reid(section_dump)
     soap_note_pub = _reid(soap_note)
     grounding_pub = _reid(grounding_result) if grounding_result is not None else None
 
@@ -626,7 +661,8 @@ async def _run_pipeline(
         deid_report = DeidReport(applied=False)
 
     # --- Final: persist everything to the visit row ----------------------
-    visit.soap_note = soap_note_pub
+    # Store the real section body (flat); note_type is already set on the visit.
+    visit.soap_note = section_pub if isinstance(section_pub, dict) else soap_note_pub
     coding_pub = _reid(coding_result) if coding_result is not None else None
     audit_trail: dict[str, Any] = {}
     if grounding_pub is not None:
@@ -666,8 +702,13 @@ async def _run_pipeline(
             ", ".join(degraded_steps),
         )
 
+    note_pub = ClinicalNote.from_sections(
+        note_type, section_pub if isinstance(section_pub, dict) else {}
+    )
     return PipelinePayload(
         visit_id=visit.id,
+        note_type=note_type,
+        note=note_pub,
         soap_note=SOAPNote.model_validate(soap_note_pub),
         anomalies=_reid(anomalies) or [],
         differentials=_reid(differentials) or [],
@@ -795,9 +836,13 @@ async def run_status(
         resource_type="visit",
         resource_id=str(visit.id),
     )
+    stored_note_type = normalize_note_type(getattr(visit, "note_type", None))
+    stored_note = ClinicalNote.from_sections(stored_note_type, visit.soap_note or {})
     return PipelinePayload(
         visit_id=visit.id,
-        soap_note=SOAPNote.model_validate(visit.soap_note or {}),
+        note_type=stored_note_type,
+        note=stored_note,
+        soap_note=stored_note.to_soap(),
         anomalies=visit.anomalies or [],
         differentials=visit.differentials or [],
         drift_flag=visit.drift_flag,

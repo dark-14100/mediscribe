@@ -5,7 +5,7 @@ and the SSE event payloads all rely on them exactly as defined here.
 See the master system prompt section "Key JSON Schemas".
 """
 import uuid
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -20,9 +20,12 @@ class TranscriptLine(BaseModel):
     line_index: int
 
 
-# --- SOAP ---
+# --- SOAP / generic clinical note ---
 
-SOAPFieldName = Literal["subjective", "objective", "assessment", "plan"]
+# Was a Literal of the four SOAP fields; widened to a plain section-key string so
+# non-SOAP note types (H&P, progress, discharge) can use their own section names.
+# Values are validated against the active note template at the boundary, not here.
+SOAPFieldName = str
 
 
 class SOAPField(BaseModel):
@@ -30,11 +33,78 @@ class SOAPField(BaseModel):
     source_lines: list[int] = Field(default_factory=list)
 
 
+# A note section is structurally identical to a SOAP field (text + citations).
+NoteSection = SOAPField
+
+
 class SOAPNote(BaseModel):
     subjective: SOAPField = Field(default_factory=SOAPField)
     objective: SOAPField = Field(default_factory=SOAPField)
     assessment: SOAPField = Field(default_factory=SOAPField)
     plan: SOAPField = Field(default_factory=SOAPField)
+
+
+class ClinicalNote(BaseModel):
+    """A note of any type as an ordered-by-template map of named sections.
+
+    ``sections`` is keyed by the template's section keys (e.g. SOAP uses
+    subjective/objective/assessment/plan; an H&P adds chief_complaint, hpi, …).
+    The body persists as this flat ``sections`` dict in the existing
+    ``visit.soap_note`` JSONB column, so SOAP visits are byte-for-byte unchanged.
+    """
+
+    note_type: str = "soap"
+    sections: dict[str, SOAPField] = Field(default_factory=dict)
+
+    @classmethod
+    def from_sections(
+        cls, note_type: str, sections: dict[str, Any] | None
+    ) -> "ClinicalNote":
+        parsed: dict[str, SOAPField] = {}
+        for key, value in (sections or {}).items():
+            if isinstance(value, SOAPField):
+                parsed[key] = value
+            elif isinstance(value, dict):
+                parsed[key] = SOAPField.model_validate(value)
+        return cls(note_type=note_type or "soap", sections=parsed)
+
+    @classmethod
+    def from_soap(cls, soap: SOAPNote) -> "ClinicalNote":
+        return cls(
+            note_type="soap",
+            sections={
+                "subjective": soap.subjective,
+                "objective": soap.objective,
+                "assessment": soap.assessment,
+                "plan": soap.plan,
+            },
+        )
+
+    def to_soap(self) -> SOAPNote:
+        """Project this note onto the SOAP four fields for the analyst agents.
+
+        For ``soap`` this is the identity. For other types the template's
+        ``soap_projection`` concatenates the relevant sections into S/O/A/P so
+        coding/compliance/differential/etc. keep working without per-type code.
+        """
+        from core.note_templates import soap_projection
+
+        mapping = soap_projection(self.note_type)
+        out: dict[str, SOAPField] = {}
+        for soap_key, source_keys in mapping.items():
+            texts: list[str] = []
+            lines: list[int] = []
+            for sk in source_keys:
+                sec = self.sections.get(sk)
+                if sec is None:
+                    continue
+                if sec.text.strip():
+                    texts.append(sec.text.strip())
+                lines.extend(sec.source_lines)
+            out[soap_key] = SOAPField(
+                text="\n\n".join(texts), source_lines=sorted(set(lines))
+            )
+        return SOAPNote(**out)
 
 
 # --- Anomalies ---
@@ -245,6 +315,9 @@ class PipelineRunRequest(BaseModel):
     transcript: list[TranscriptLine] = Field(
         default_factory=list, max_length=settings.MAX_TRANSCRIPT_LINES
     )
+    # Optional override of the visit's note type for this run (soap | hp |
+    # progress | discharge). When omitted, the visit's stored note_type is used.
+    note_type: str | None = None
 
 
 # --- Final pipeline payload ---
@@ -252,6 +325,10 @@ class PipelineRunRequest(BaseModel):
 
 class PipelinePayload(BaseModel):
     visit_id: uuid.UUID
+    # `soap_note` is the SOAP projection (always the 4 fields) for back-compat;
+    # `note` carries the real, template-shaped sections + the note type.
+    note_type: str = "soap"
+    note: ClinicalNote | None = None
     soap_note: SOAPNote
     anomalies: list[AnomalyFlag] = Field(default_factory=list)
     differentials: list[Differential] = Field(default_factory=list)

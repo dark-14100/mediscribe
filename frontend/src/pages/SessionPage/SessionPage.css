@@ -26,6 +26,33 @@
   align-items: stretch;
 }
 
+.session-page__note-type {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.session-page__note-type-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-secondary, #4b5563);
+}
+
+.session-page__note-type-select {
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--border, #d1d5db);
+  border-radius: 8px;
+  background: var(--surface, #fff);
+  font-size: 0.9rem;
+  color: inherit;
+  cursor: pointer;
+}
+
+.session-page__note-type-select:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .session-page__trajectory-wrap {
   flex: 1;
   min-width: 0;

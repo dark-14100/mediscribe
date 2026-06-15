@@ -26,6 +26,11 @@ import re
 from typing import Any, Literal
 
 from core.config import settings
+from core.note_templates import (
+    grounding_weights as _template_weights,
+    normalize_note_type,
+    section_keys as _template_section_keys,
+)
 from schemas.pipeline import (
     GroundingClaim,
     GroundingFieldResult,
@@ -37,14 +42,10 @@ logger = logging.getLogger("medscribe.grounding")
 
 SOAP_KEYS: tuple[str, ...] = ("subjective", "objective", "assessment", "plan")
 
-# Fields weighted higher in the overall score: a fabricated Assessment/Plan is
-# far more dangerous than an over-summarised Subjective.
-_FIELD_WEIGHTS: dict[str, float] = {
-    "subjective": 1.0,
-    "objective": 1.0,
-    "assessment": 2.0,
-    "plan": 2.0,
-}
+# Default per-field weight when a template doesn't specify one. Diagnosis/plan-
+# like sections are weighted 2.0 in the note templates (a fabricated Assessment/
+# Plan is far more dangerous than an over-summarised Subjective).
+_DEFAULT_WEIGHT: float = 1.0
 
 _STATUS_RANK: dict[str, int] = {"ungrounded": 0, "partial": 1, "grounded": 2}
 
@@ -118,10 +119,27 @@ def _transcript_line_map(transcript: list[Any]) -> dict[int, str]:
     return lines
 
 
-def _soap_field(soap: Any, key: str) -> dict[str, Any]:
-    """Extract {text, source_lines} for a field from a SOAPNote model or dict."""
-    container = soap.model_dump() if hasattr(soap, "model_dump") else soap
-    field = (container or {}).get(key) if isinstance(container, dict) else None
+def _note_meta(note: Any) -> tuple[str, dict[str, Any]]:
+    """Return (note_type, flat sections dict) for a SOAPNote, ClinicalNote, or dict.
+
+    A ClinicalNote serialises to ``{note_type, sections: {...}}``; a SOAPNote (or
+    a legacy flat dict) serialises to ``{subjective: {...}, ...}`` and is treated
+    as a ``soap`` note. This keeps the SOAP path identical to before.
+    """
+    container = note.model_dump() if hasattr(note, "model_dump") else note
+    if not isinstance(container, dict):
+        return "soap", {}
+    sections = container.get("sections")
+    if isinstance(sections, dict):
+        return normalize_note_type(container.get("note_type")), sections
+    return "soap", container
+
+
+def _section_field(sections: dict[str, Any], key: str) -> dict[str, Any]:
+    """Extract normalized {text, source_lines} for one section."""
+    field = sections.get(key) if isinstance(sections, dict) else None
+    if hasattr(field, "model_dump"):
+        field = field.model_dump()
     if not isinstance(field, dict):
         return {"text": "", "source_lines": []}
     raw_lines = field.get("source_lines", [])
@@ -225,11 +243,12 @@ def _grade_field(
     return _field_result_from_claims(key, all_claims, cited_lines_valid), all_claims
 
 
-def _llm_field_set() -> set[str]:
-    """Fields eligible for the LLM second pass (config-driven)."""
+def _llm_field_set(keys: tuple[str, ...]) -> set[str]:
+    """Sections eligible for the LLM second pass (config-driven), scoped to the
+    note's own sections."""
     raw = settings.GROUNDING_LLM_FIELDS or ""
     requested = {f.strip().lower() for f in raw.split(",") if f.strip()}
-    return requested & set(SOAP_KEYS)
+    return requested & set(keys)
 
 
 async def _llm_verify_field(
@@ -322,16 +341,19 @@ async def verify(soap_note: Any, transcript: list[Any]) -> GroundingResult:
     ``GROUNDING_USE_LLM`` is set, is scoped to ``GROUNDING_LLM_FIELDS``, can only
     *downgrade* a verdict, and degrades to the rules result on any error.
     """
+    note_type, sections = _note_meta(soap_note)
+    keys = tuple(_template_section_keys(note_type))
+    weights = _template_weights(note_type)
     line_map = _transcript_line_map(transcript or [])
     graded = {
-        key: _grade_field(key, _soap_field(soap_note, key), line_map)
-        for key in SOAP_KEYS
+        key: _grade_field(key, _section_field(sections, key), line_map)
+        for key in keys
     }
 
     checked_with: Literal["rules", "rules+llm"] = "rules"
     if settings.GROUNDING_USE_LLM:
-        llm_fields = _llm_field_set()
-        for key in SOAP_KEYS:
+        llm_fields = _llm_field_set(keys)
+        for key in keys:
             field_result, all_claims = graded[key]
             if key not in llm_fields or not all_claims:
                 continue
@@ -351,11 +373,11 @@ async def verify(soap_note: Any, transcript: list[Any]) -> GroundingResult:
             )
             checked_with = "rules+llm"
 
-    fields = [graded[key][0] for key in SOAP_KEYS]
+    fields = [graded[key][0] for key in keys]
 
     # Overall score weights non-empty fields; an empty note is trivially grounded.
     scored = [
-        (f, _FIELD_WEIGHTS.get(f.field, 1.0))
+        (f, weights.get(f.field, _DEFAULT_WEIGHT))
         for f in fields
         if not (f.status == "grounded" and not f.unsupported_claims and f.confidence == 1.0)
     ]

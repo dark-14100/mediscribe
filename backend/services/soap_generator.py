@@ -4,6 +4,7 @@ import json
 import logging
 from typing import Any
 
+from core.note_templates import get_template, normalize_note_type, section_keys
 from services.groq_retry import chat_completion
 
 logger = logging.getLogger(__name__)
@@ -113,4 +114,70 @@ async def generate_soap(transcript: list[Any]) -> dict:
 
     except Exception:
         logger.exception("[SOAP_GENERATOR] SOAP generation failed")
+        raise
+
+
+def _build_note_prompt(note_type: str) -> str:
+    """System prompt for a non-SOAP note type, built from its template."""
+    template = get_template(note_type)
+    keys = section_keys(note_type)
+    guidance = template.get("guidance", {})
+    lines = "\n".join(
+        f'- "{key}": {guidance.get(key, "the relevant content for this section")}'
+        for key in keys
+    )
+    key_list = ", ".join(keys)
+    return (
+        f"You are a medical documentation AI. Given a doctor-patient conversation "
+        f"transcript, generate a {template['label']} in JSON format.\n\n"
+        f"Return ONLY a JSON object with exactly these keys: {key_list}.\n\n"
+        f"Each key must have:\n"
+        f'- "text": a concise clinical summary for that section\n'
+        f'- "source_lines": list of line numbers from the transcript that support it\n\n'
+        f"Sections:\n{lines}\n\n"
+        f"Rules:\n"
+        f"- Only use information present in the transcript. Never invent details.\n"
+        f"- Be concise and clinical.\n"
+        f"- If a section has no supporting information, set text to empty string "
+        f"and source_lines to empty list.\n"
+        f"- Return valid JSON only. No explanation, no markdown, no extra keys."
+    )
+
+
+async def generate_note(transcript: list[Any], note_type: str = "soap") -> dict:
+    """Generate a clinical note of the given type.
+
+    Returns a flat ``{section_key: {text, source_lines}}`` dict. For ``soap`` this
+    delegates to ``generate_soap`` so the SOAP path is byte-for-byte unchanged.
+    """
+    note_type = normalize_note_type(note_type)
+    if note_type == "soap":
+        return await generate_soap(transcript)
+
+    keys = section_keys(note_type)
+    logger.info("[SOAP_GENERATOR] Starting %s generation", note_type)
+    try:
+        data = await chat_completion(
+            model=GROQ_MODEL,
+            messages=[
+                {"role": "system", "content": _build_note_prompt(note_type)},
+                {"role": "user", "content": _format_transcript_for_prompt(transcript)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1400,
+            label=f"note_generator:{note_type}",
+        )
+        choices = data.get("choices") or []
+        if not choices:
+            raise ValueError("Groq returned no completion choices")
+        content = choices[0].get("message", {}).get("content")
+        if not content:
+            raise ValueError("Groq returned empty completion content")
+
+        parsed = _parse_llm_content(content)
+        note = {key: _normalize_soap_field(parsed.get(key)) for key in keys}
+        logger.info("[SOAP_GENERATOR] %s generation successful", note_type)
+        return note
+    except Exception:
+        logger.exception("[SOAP_GENERATOR] %s generation failed", note_type)
         raise

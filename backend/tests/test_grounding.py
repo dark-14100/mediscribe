@@ -5,7 +5,7 @@ deterministic rules: citation presence, citation validity, and lexical overlap.
 """
 import pytest
 
-from schemas.pipeline import SOAPField, SOAPNote, TranscriptLine
+from schemas.pipeline import ClinicalNote, SOAPField, SOAPNote, TranscriptLine
 from services.grounding import verify
 
 _TRANSCRIPT = [
@@ -41,6 +41,38 @@ async def test_well_cited_claim_is_grounded():
     # Note has only one non-empty (grounded) field -> overall grounded.
     assert result.status == "grounded"
     assert result.checked_with == "rules"
+
+
+@pytest.mark.asyncio
+async def test_soap_clinical_note_matches_soapnote():
+    """Grounding a ClinicalNote(soap) is identical to grounding a SOAPNote."""
+    soap = SOAPNote(
+        subjective=SOAPField(
+            text="Severe headache and nausea since yesterday.", source_lines=[2]
+        ),
+        assessment=SOAPField(text="Headache.", source_lines=[2]),
+    )
+    r_soap = await verify(soap, _TRANSCRIPT)
+    r_clinical = await verify(ClinicalNote.from_soap(soap), _TRANSCRIPT)
+    assert r_soap.model_dump() == r_clinical.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_hp_note_grades_its_own_sections():
+    """A non-SOAP note is graded against its template's sections, not S/O/A/P."""
+    note = ClinicalNote.from_sections(
+        "hp",
+        {
+            "chief_complaint": {"text": "Severe headache.", "source_lines": [2]},
+            "hpi": {"text": "Since yesterday, with nausea.", "source_lines": [2]},
+            "assessment": {"text": "Tension headache.", "source_lines": [2]},
+            "plan": {"text": "", "source_lines": []},
+        },
+    )
+    result = await verify(note, _TRANSCRIPT)
+    fields = {f.field for f in result.fields}
+    assert "chief_complaint" in fields and "hpi" in fields
+    assert "subjective" not in fields
 
 
 @pytest.mark.asyncio

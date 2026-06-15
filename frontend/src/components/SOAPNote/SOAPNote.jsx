@@ -1,12 +1,6 @@
 import { useEffect, useRef } from 'react';
 import './SOAPNote.css';
-
-const FIELDS = [
-  { key: 'subjective', label: 'Subjective' },
-  { key: 'objective', label: 'Objective' },
-  { key: 'assessment', label: 'Assessment' },
-  { key: 'plan', label: 'Plan' },
-];
+import { getTemplate, sectionFields } from '../../lib/noteTemplates.js';
 
 function wordCount(text) {
   const trimmed = (text || '').trim();
@@ -49,7 +43,10 @@ export default function SOAPNote({
   onChange,
   errored = false,
   grounding = null,
+  noteType = 'soap',
 }) {
+  const FIELDS = sectionFields(noteType);
+  const title = getTemplate(noteType).label;
   const groundingByField = {};
   for (const f of grounding?.fields ?? []) groundingByField[f.field] = f;
   const overall = grounding ? GROUNDING_META[grounding.status] : null;
@@ -58,7 +55,7 @@ export default function SOAPNote({
   return (
     <section className="soap-note">
       <div className="soap-note__header">
-        <h2 className="soap-note__title">SOAP Note</h2>
+        <h2 className="soap-note__title">{title}</h2>
         {overall ? (
           <span
             className={`soap-note__grounding soap-note__grounding--${overall.cls}`}
