@@ -1,8 +1,10 @@
 """Coding agent — pipeline Step 5.5.
 
-Turns a grounded SOAP note into advisory billing/diagnosis codes: ICD-10
-(diagnoses from Assessment), CPT (procedures from Objective/Plan), and one
-office-visit E&M level appropriate to the documented complexity.
+Turns a grounded clinical note into advisory billing/diagnosis codes: ICD-10
+(diagnoses), CPT (procedures), and one office-visit E&M level appropriate to the
+documented complexity. The note type's template decides which sections drive
+diagnosis vs procedure codes (e.g. SOAP: ICD from Assessment, CPT from
+Objective/Plan; discharge: ICD from the discharge diagnosis).
 
 These are *suggestions only* — never a final bill. The provider is responsible
 for the codes they submit. The agent follows the same contract as the other
@@ -11,7 +13,7 @@ degrades to an empty result so the pipeline keeps going).
 
 The pipeline route calls this as:
     from services.coding import generate_codes
-    result = await generate_codes(soap_note, patient_class="established")
+    result = await generate_codes(clinical_note, patient_class="established")
 """
 from __future__ import annotations
 
@@ -27,7 +29,13 @@ from core.constants import (
     EM_CODES_NEW,
     ICD10_PRIMARY_CARE,
 )
-from schemas.pipeline import CodeSuggestion, CodingResult, SOAPNote
+from core.note_templates import (
+    coding_sections,
+    normalize_note_type,
+    section_keys,
+    section_labels,
+)
+from schemas.pipeline import ClinicalNote, CodeSuggestion, CodingResult, SOAPNote
 from services.groq_retry import chat_completion
 
 log = logging.getLogger("medscribe.coding")
@@ -38,18 +46,55 @@ _ICD10_RE = re.compile(r"^[A-TV-Z]\d[0-9A-Z](?:\.[0-9A-Z]{1,4})?$")
 # CPT / E&M / HCPCS-numeric: 4-5 digits.
 _CPT_RE = re.compile(r"^\d{4,5}$")
 
-_VALID_FIELDS: frozenset[str] = frozenset(
-    {"subjective", "objective", "assessment", "plan"}
-)
-
 _ICD10_BLOCK = "\n".join(
     f"  {code}: {desc}" for code, desc in ICD10_PRIMARY_CARE.items()
 )
 _CPT_BLOCK = "\n".join(f"  {code}: {desc}" for code, desc in CPT_EM_REFERENCE.items())
 
-SYSTEM_PROMPT = f"""\
-You are a medical coding assistant. From the SOAP note you receive, suggest \
-billing and diagnosis codes for a {{patient_class}} patient office visit.
+
+def _extract_note(note: Any) -> tuple[str, dict[str, dict[str, Any]]]:
+    """Return (note_type, {section_key: {text, source_lines}}) for a ClinicalNote,
+    SOAPNote, or dict — so SOAP callers/tests keep passing a SOAPNote."""
+    if isinstance(note, ClinicalNote):
+        return normalize_note_type(note.note_type), {
+            k: {"text": v.text, "source_lines": list(v.source_lines)}
+            for k, v in note.sections.items()
+        }
+    if isinstance(note, SOAPNote):
+        return "soap", note.model_dump()
+    if isinstance(note, dict):
+        if isinstance(note.get("sections"), dict):
+            return normalize_note_type(note.get("note_type")), note["sections"]
+        return "soap", note
+    return "soap", {}
+
+
+def _dx_px_defaults(note_type: str) -> tuple[str, str]:
+    """Default evidence section for diagnosis vs procedure codes."""
+    coding = coding_sections(note_type)
+    keys = section_keys(note_type)
+    dx = (coding["dx_sections"] or [k for k in keys if "assess" in k] or keys)[0]
+    px_list = coding["px_sections"] or [keys[-1]] if keys else []
+    px = px_list[-1] if px_list else dx
+    return dx, px
+
+
+def _section_labels_join(note_type: str, keys: list[str]) -> str:
+    labels = section_labels(note_type)
+    return "/".join(labels.get(k, k).upper() for k in keys) or "the note"
+
+
+def _build_system_prompt(note_type: str, patient_class: str, em_hint: str) -> str:
+    coding = coding_sections(note_type)
+    keys = section_keys(note_type)
+    dx_default, px_default = _dx_px_defaults(note_type)
+    dx_label = _section_labels_join(note_type, coding["dx_sections"] or [dx_default])
+    px_label = _section_labels_join(note_type, coding["px_sections"] or [px_default])
+    field_options = "|".join(keys)
+    label = section_labels(note_type)  # for the example shapes
+    return f"""\
+You are a medical coding assistant. From the clinical note you receive, suggest \
+billing and diagnosis codes for a {patient_class} patient office visit.
 
 Reference ICD-10 codes (not exhaustive — use your knowledge too):
 {_ICD10_BLOCK}
@@ -58,47 +103,45 @@ Reference CPT / E&M codes:
 {_CPT_BLOCK}
 
 Produce:
-1. ICD-10 diagnosis codes derived from the ASSESSMENT (and supporting findings).
-2. CPT procedure codes ONLY for procedures actually documented in OBJECTIVE/PLAN \
+1. ICD-10 diagnosis codes derived from the {dx_label} section(s) (and supporting findings).
+2. CPT procedure codes ONLY for procedures actually documented in {px_label} \
 (do not invent procedures).
 3. Exactly ONE office-visit E&M level appropriate to the documented complexity \
-for a {{patient_class}} patient ({{em_hint}}).
+for a {patient_class} patient ({em_hint}).
 
-For every code provide: code, description, confidence (0-1), the SOAP \
-evidence_field it came from (subjective|objective|assessment|plan), and a \
-one-sentence rationale. These are advisory suggestions for the provider to \
-review — NOT a final bill.
+For every code provide: code, description, confidence (0-1), the evidence_field \
+section it came from ({field_options}), and a one-sentence rationale. These are \
+advisory suggestions for the provider to review — NOT a final bill.
 
 Return ONLY a JSON object with this exact shape and no markdown:
-{{{{
-  "icd10": [{{{{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "assessment", "rationale": "..."}}}}],
-  "cpt":   [{{{{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "plan", "rationale": "..."}}}}],
-  "em":     {{{{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "plan", "rationale": "..."}}}}
-}}}}
+{{
+  "icd10": [{{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "{dx_default}", "rationale": "..."}}],
+  "cpt":   [{{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "{px_default}", "rationale": "..."}}],
+  "em":     {{"code": "...", "description": "...", "confidence": 0.0, "evidence_field": "{px_default}", "rationale": "..."}}
+}}
 Use "icd10": [] / "cpt": [] when none apply, and "em": null if no office visit \
 level fits.\
 """
 
 
-def _coerce_soap(soap_note: SOAPNote | dict[str, Any]) -> SOAPNote:
-    if isinstance(soap_note, SOAPNote):
-        return soap_note
-    return SOAPNote.model_validate(soap_note)
-
-
-def _format_soap_for_prompt(soap: SOAPNote) -> str:
+def _format_note_for_prompt(note_type: str, sections: dict[str, dict[str, Any]]) -> str:
+    labels = section_labels(note_type)
     parts = []
-    for key in ("subjective", "objective", "assessment", "plan"):
-        text = getattr(soap, key).text.strip() or "(empty)"
-        parts.append(f"{key.upper()}: {text}")
-    return "SOAP NOTE TO CODE:\n" + "\n".join(parts)
+    for key in section_keys(note_type):
+        text = str((sections.get(key) or {}).get("text", "")).strip() or "(empty)"
+        parts.append(f"{labels.get(key, key).upper()}: {text}")
+    return "CLINICAL NOTE TO CODE:\n" + "\n".join(parts)
 
 
-def _field_source_lines(soap: SOAPNote, field: str | None) -> tuple[str | None, list[int]]:
+def _field_source_lines(
+    sections: dict[str, dict[str, Any]], field: str | None, valid: frozenset[str]
+) -> tuple[str | None, list[int]]:
     """Resolve the evidence field + its transcript source_lines."""
-    if field not in _VALID_FIELDS:
+    if field not in valid:
         return None, []
-    return field, list(getattr(soap, field).source_lines or [])
+    raw = (sections.get(field) or {}).get("source_lines", [])
+    lines = [int(n) for n in raw if isinstance(n, (int, float)) and not isinstance(n, bool)]
+    return field, lines
 
 
 def _clean_confidence(value: Any) -> float:
@@ -111,7 +154,8 @@ def _clean_confidence(value: Any) -> float:
 
 
 def _parse_one(
-    raw: Any, system: str, code_re: re.Pattern[str], soap: SOAPNote,
+    raw: Any, system: str, code_re: re.Pattern[str],
+    sections: dict[str, dict[str, Any]], valid: frozenset[str],
     reference: dict[str, str], default_field: str,
 ) -> CodeSuggestion | None:
     if not isinstance(raw, dict):
@@ -122,9 +166,9 @@ def _parse_one(
     # Prefer the canonical reference description for known codes.
     description = reference.get(code) or str(raw.get("description", "")).strip()
     field = raw.get("evidence_field")
-    if field not in _VALID_FIELDS:
+    if field not in valid:
         field = default_field
-    evidence_field, evidence_lines = _field_source_lines(soap, field)
+    evidence_field, evidence_lines = _field_source_lines(sections, field, valid)
     return CodeSuggestion(
         system=system,  # type: ignore[arg-type]
         code=code,
@@ -147,8 +191,13 @@ def _dedupe(items: list[CodeSuggestion]) -> list[CodeSuggestion]:
     return out
 
 
-def _parse_em(raw: Any, soap: SOAPNote, patient_class: str) -> CodeSuggestion | None:
-    suggestion = _parse_one(raw, "E&M", _CPT_RE, soap, CPT_EM_REFERENCE, "plan")
+def _parse_em(
+    raw: Any, sections: dict[str, dict[str, Any]], valid: frozenset[str],
+    em_default: str, patient_class: str,
+) -> CodeSuggestion | None:
+    suggestion = _parse_one(
+        raw, "E&M", _CPT_RE, sections, valid, CPT_EM_REFERENCE, em_default
+    )
     if suggestion is None:
         return None
     valid = EM_CODES_NEW if patient_class == "new" else EM_CODES_ESTABLISHED
@@ -163,13 +212,18 @@ def _parse_em(raw: Any, soap: SOAPNote, patient_class: str) -> CodeSuggestion | 
 
 
 def _parse_response(
-    parsed: dict[str, Any], soap: SOAPNote, patient_class: str
+    parsed: dict[str, Any], note_type: str,
+    sections: dict[str, dict[str, Any]], patient_class: str
 ) -> CodingResult:
+    valid = frozenset(section_keys(note_type))
+    dx_default, px_default = _dx_px_defaults(note_type)
     icd10 = _dedupe(
         [
             s
             for s in (
-                _parse_one(r, "ICD-10", _ICD10_RE, soap, ICD10_PRIMARY_CARE, "assessment")
+                _parse_one(
+                    r, "ICD-10", _ICD10_RE, sections, valid, ICD10_PRIMARY_CARE, dx_default
+                )
                 for r in (parsed.get("icd10") or [])
                 if isinstance(parsed.get("icd10"), list)
             )
@@ -180,7 +234,9 @@ def _parse_response(
         [
             s
             for s in (
-                _parse_one(r, "CPT", _CPT_RE, soap, CPT_EM_REFERENCE, "plan")
+                _parse_one(
+                    r, "CPT", _CPT_RE, sections, valid, CPT_EM_REFERENCE, px_default
+                )
                 for r in (parsed.get("cpt") or [])
                 if isinstance(parsed.get("cpt"), list)
             )
@@ -197,7 +253,7 @@ def _parse_response(
     cpt = [s for s in combined if s.system == "CPT"]
 
     em = (
-        _parse_em(parsed.get("em"), soap, patient_class)
+        _parse_em(parsed.get("em"), sections, valid, px_default, patient_class)
         if settings.CODING_INCLUDE_EM
         else None
     )
@@ -211,30 +267,31 @@ def _parse_response(
 
 
 async def generate_codes(
-    soap_note: SOAPNote | dict[str, Any], *, patient_class: str = "established"
+    note: SOAPNote | ClinicalNote | dict[str, Any], *, patient_class: str = "established"
 ) -> CodingResult:
-    """Return advisory ICD-10 / CPT / E&M suggestions for a SOAP note.
+    """Return advisory ICD-10 / CPT / E&M suggestions for a clinical note.
 
+    Accepts a SOAPNote (back-compat), a ClinicalNote of any type, or a dict.
     Never raises on a malformed LLM response — returns an empty CodingResult.
     Raises httpx.HTTPStatusError only if the Groq request itself fails (handled
     by the pipeline's _maybe_call wrapper).
     """
-    soap = _coerce_soap(soap_note)
+    note_type, sections = _extract_note(note)
     patient_class = "new" if str(patient_class).lower() == "new" else "established"
     em_hint = (
         "new-patient codes 99202-99205"
         if patient_class == "new"
         else "established-patient codes 99211-99215"
     )
-    system_prompt = SYSTEM_PROMPT.format(patient_class=patient_class, em_hint=em_hint)
+    system_prompt = _build_system_prompt(note_type, patient_class, em_hint)
 
-    log.info("[coding] generating codes for %s patient", patient_class)
+    log.info("[coding] generating codes for %s patient (%s note)", patient_class, note_type)
 
     data = await chat_completion(
         model=settings.CODING_MODEL,
         messages=[
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": _format_soap_for_prompt(soap)},
+            {"role": "user", "content": _format_note_for_prompt(note_type, sections)},
         ],
         response_format={"type": "json_object"},
         max_tokens=900,
@@ -258,7 +315,7 @@ async def generate_codes(
         log.warning("[coding] LLM response is not a JSON object — empty coding result")
         return CodingResult(patient_class=patient_class)  # type: ignore[arg-type]
 
-    result = _parse_response(parsed, soap, patient_class)
+    result = _parse_response(parsed, note_type, sections, patient_class)
     log.info(
         "[coding] icd10=%d cpt=%d em=%s",
         len(result.icd10),

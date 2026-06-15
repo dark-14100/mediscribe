@@ -157,6 +157,16 @@ def soap_projection(note_type: str | None) -> dict[str, list[str]]:
     return dict(get_template(note_type)["soap_projection"])
 
 
+def coding_sections(note_type: str | None) -> dict[str, list[str]]:
+    """{"dx_sections": [...], "px_sections": [...]} — which sections drive
+    diagnosis (ICD-10) vs procedure (CPT) codes for this note type."""
+    coding = get_template(note_type).get("coding", {})
+    return {
+        "dx_sections": list(coding.get("dx_sections", [])),
+        "px_sections": list(coding.get("px_sections", [])),
+    }
+
+
 def note_type_choices() -> list[dict[str, str]]:
     """[{key, label}, ...] for selectors/clients."""
     return [{"key": key, "label": tpl["label"]} for key, tpl in NOTE_TEMPLATES.items()]

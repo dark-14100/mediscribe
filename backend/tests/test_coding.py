@@ -63,6 +63,36 @@ async def test_generate_codes_parses_all_systems():
 
 
 @pytest.mark.asyncio
+async def test_generate_codes_for_hp_note_uses_template_sections():
+    """A non-SOAP ClinicalNote is coded against its own sections; evidence_field
+    + source_lines resolve from the template sections, not S/O/A/P."""
+    from schemas.pipeline import ClinicalNote
+
+    note = ClinicalNote.from_sections(
+        "hp",
+        {
+            "chief_complaint": {"text": "Sore throat", "source_lines": [1]},
+            "exam": {"text": "Pharynx red. ECG performed.", "source_lines": [5]},
+            "assessment": {"text": "URI", "source_lines": [8]},
+            "plan": {"text": "Supportive care", "source_lines": [10]},
+        },
+    )
+    payload = {
+        "icd10": [{"code": "J06.9", "confidence": 0.9, "evidence_field": "assessment"}],
+        "cpt": [{"code": "93000", "confidence": 0.7, "evidence_field": "exam"}],
+        "em": None,
+    }
+    with _patched_client(payload):
+        result = await generate_codes(note, patient_class="established")
+
+    assert [c.code for c in result.icd10] == ["J06.9"]
+    assert result.icd10[0].evidence_lines == [8]
+    # CPT evidence comes from the H&P "exam" section, not a SOAP field.
+    assert result.cpt[0].evidence_field == "exam"
+    assert result.cpt[0].evidence_lines == [5]
+
+
+@pytest.mark.asyncio
 async def test_invalid_codes_are_dropped():
     payload = {
         "icd10": [

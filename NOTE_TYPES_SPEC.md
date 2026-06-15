@@ -146,15 +146,21 @@ flowchart LR
 | Phase | Scope | Effort | Risk |
 |---|---|---|---|
 | **A** ✅ shipped | Template registry + `ClinicalNote` schema & adapters + `generate_note` + `visit.note_type` (migration `002`) + frontend selector & generic editor + grounding generalised + **SOAP unchanged**. New types render/generate/ground/store/display. | Medium–High | Medium (touches core schema) |
-| **B** | Per-template **coding + compliance** mappings so the trust agents are fully type-aware (not just the SOAP projection). | Medium | Low |
+| **B** ✅ shipped | Per-template **coding + compliance** mappings so the trust agents read the real note sections (not the SOAP projection). | Medium | Low |
 | **C** | Seed/eval/demo data per type; polish prompts per type; docs. | Low–Med | Low |
 
 ### As-built notes (Phase A)
 
 - **No data migration**: the note body still lives in the `visit.soap_note` JSONB column as a flat `{section_key: {text, source_lines}}` map; `note_type` is a new column (migration `002_add_visit_note_type`). SOAP rows are byte-for-byte unchanged.
-- **Analyst agents untouched**: coding, compliance, differential, anomaly, bias, history, embedding still receive a **SOAP projection** (`ClinicalNote.to_soap()` via each template's `soap_projection`). They keep working for every note type with zero per-agent code; Phase B replaces the projection with per-template mappings.
 - **Grounding is fully generic**: it grades the real template sections; SOAP output is identical (verified by a `model_dump()` equality test).
 - **Note type flows** via the run request (`PipelineRunRequest.note_type`) and visit creation (`VisitCreate.note_type`), is persisted on the visit, and round-trips through run-status / save / sign / reload (`PipelinePayload.note_type` + `note`, `VisitRead.note_type`).
+
+### As-built notes (Phase B)
+
+- **Coding** (`services/coding.py`): `generate_codes` accepts a `ClinicalNote` (or SOAPNote/dict). The prompt and `evidence_field` validation are built from the template's `coding.dx_sections` / `px_sections` and section labels; `evidence_lines` resolve from the real sections. SOAP output is unchanged (the SOAP template reproduces the old Assessment→ICD, Objective/Plan→CPT mapping).
+- **Compliance** (`services/compliance.py`): `check` accepts a `ClinicalNote`. The SOAP path keeps the exact original `SYSTEM_PROMPT` + user message (so the HIPAA-prompt test still holds); other types get a generic prompt that lists their own sections and uses the dx/disposition section labels.
+- **Pipeline + save**: both now pass the real `clinical_note` to coding and compliance (the SOAP projection is still used only for the *other* analyst agents — differential/anomaly/bias/history/embedding, which remain projection-based).
+- **Still projection-based** (future work): differential, anomaly, bias, history retrieval, and embeddings read the SOAP projection.
 
 Phase A is the bulk; B/C harden the trust layer for the new types and round out fixtures.
 

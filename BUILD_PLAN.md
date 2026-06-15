@@ -160,7 +160,7 @@ Researched against the 2026 leaders (Nuance DAX Copilot, Abridge, Suki, Nabla, D
 | **Grounding gate** | No automatic check that the note matches what was actually said. | Patient safety + trust. A made-up symptom in a chart is dangerous. We already have the raw material (`source_lines`). | ✅ Done |
 | **Automatic coding** | We don't suggest ICD-10/CPT billing codes. | Table stakes in 2026 and the direct way clinics make/save money. | ✅ Done (suggest + confirm/edit/dismiss; export = Phase C) |
 | **Live transcription view** | Transcription happens in one batch, not word-by-word live. | Doctors expect to watch the note form in real time. | ◻️ |
-| **Multiple note types** | We only produce SOAP. | Rivals ship 6+ (H&P, progress note, discharge summary, etc.). | ✅ Done (Phase A: SOAP + H&P + progress + discharge; per-type coding/compliance = Phase B) |
+| **Multiple note types** | We only produce SOAP. | Rivals ship 6+ (H&P, progress note, discharge summary, etc.). | ✅ Done (A: SOAP + H&P + progress + discharge · B: per-type coding/compliance) |
 | **Accuracy benchmark** | No measured/published accuracy numbers. | Buyers ask "how accurate, how often does it hallucinate?" We need an answer. | ✅ Done (eval harness) |
 | **Multilingual** | English-focused. | Competitors advertise 28–80+ languages. | ◻️ |
 | **Certifications** | No SOC 2 / HITRUST yet. | A hard gate for hospital procurement. | ◻️ |
@@ -253,7 +253,7 @@ The core pipeline (our moat) stays exactly as-is. We're **wrapping** it with a t
 | 1 | Degraded banner (frontend) | ✅ Done | Low | backend emits `degraded_steps` |
 | 2 | FHIR DocumentReference write-back | ◻️ Next | High | Epic sandbox access |
 | 2 | Coding agent (ICD-10 / CPT / E&M) | ✅ Done (A: suggest · B: confirm/edit/dismiss) | Medium | grounding gate (Phase 1) ✅ |
-| 2 | Multiple note types | ✅ Done (A: SOAP+H&P+progress+discharge; B: per-type coding/compliance) | Medium | — |
+| 2 | Multiple note types | ✅ Done (A: SOAP+H&P+progress+discharge · B: per-type coding/compliance) | Medium | — |
 | 2 | Live transcription view | ◻️ | Medium | streaming ASR |
 | 3 | Multilingual | ◻️ | Medium | — |
 | 3 | Multi-model orchestration + fallback | ◻️ | Low–Med | — |

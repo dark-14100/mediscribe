@@ -564,7 +564,7 @@ async def _run_pipeline(
     compliance_fn = _resolve("services.compliance", "check")
     compliance_result = await _maybe_call(
         compliance_fn,
-        soap_note,
+        clinical_note,
         default=None,
         label="compliance",
         degraded=degraded_steps,
@@ -599,7 +599,7 @@ async def _run_pipeline(
         )
         coding_result = await _maybe_call(
             coding_fn,
-            soap_note,
+            clinical_note,
             patient_class=patient_class,
             default=None,
             label="coding_agent",

@@ -91,8 +91,8 @@ async def save_note(
         sections = {}
     visit.note_type = note_type
     visit.soap_note = sections
-    # SOAP projection of whatever was saved, for the compliance recheck below.
-    soap_for_checks = ClinicalNote.from_sections(note_type, sections).to_soap()
+    # The real (template-shaped) note for the compliance recheck below.
+    note_for_checks = ClinicalNote.from_sections(note_type, sections)
     if payload.soap_audit_trail:
         visit.soap_audit_trail = payload.soap_audit_trail
     if payload.doctor_modified_fields:
@@ -110,7 +110,7 @@ async def save_note(
         visit.soap_audit_trail = trail
 
     try:
-        compliance = await compliance_check(soap_for_checks)
+        compliance = await compliance_check(note_for_checks)
         visit.compliance_status = compliance.status
         visit.compliance_notes = [
             n.model_dump(mode="json") for n in compliance.notes
