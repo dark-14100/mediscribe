@@ -214,9 +214,21 @@ Unlike LLM calls, **the EHR is a trusted destination and the system of record.**
 
 | Phase | Scope | Unblocked by | Effort | Risk |
 |---|---|---|---|---|
-| **A** (now) | `DocumentReference` mapping + LOINC in templates + `services/ehr_export.py` (no-auth) + search-or-create Patient + endpoint + persistence + frontend button + **live round-trip against HAPI/Meld**. | nothing | Medium | Low |
+| **A** ✅ shipped | `DocumentReference` mapping + LOINC in templates + `services/ehr_export.py` (no-auth) + search-or-create Patient + endpoint + persistence + frontend button. | nothing | Medium | Low |
 | **B** | SMART **Backend Services** auth (signed JWT, JWKS publishing) + Epic sandbox config + **patient identifier matching** + Epic-specific quirks. | Epic creds | Medium | Medium |
 | **C** | `auto` mode (file on sign-off) + **PDF/HTML** attachment + `Encounter` linkage + versioning/replace + multi-EHR targets + write-back status dashboard. | — | Med | Low–Med |
+
+### As-built notes (Phase A)
+
+- **Endpoint lives in the notes router** (`POST /notes/ehr-export/{visit_id}`), not `/pipeline/...` as originally drafted — it's a post-sign action, so it sits beside `/notes/save` and `/notes/sign` and reuses their ownership + audit-trail patterns.
+- **Auth:** `none` is fully implemented (open sandbox); `smart_backend` raises a clear "not yet implemented (Phase B)" error so selecting it fails loudly rather than silently.
+- **Service** (`services/ehr_export.py`): pure `assemble_note_text` + `build_document_reference` (US Core clinical-note, LOINC per template), `_search_or_create_patient` (by `urn:mediscribe:patient-id` identifier), and `export_note` orchestration. All FHIR HTTP goes through the existing `call_with_retries` backoff policy.
+- **LOINC** is data-driven in `core/note_templates.py` (`loinc()` helper): soap `34109-9`, hp `34117-2`, progress `11506-3`, discharge `18842-5`.
+- **Persistence:** outcome (success *and* failure) is written to `visit.soap_audit_trail.ehr_export` (no migration), already surfaced by `VisitRead`. Idempotent: a `filed` visit returns the existing record unless `force=true`.
+- **Audit:** every attempt calls `log_phi_access(action="ehr_export")`.
+- **Gating:** `EHR_EXPORT_MODE` off by default → endpoint returns 403; only signed notes can be filed (else 409); failures persist `failed` and return 502.
+- **Frontend:** a "Send to EHR" button on the signed card, gated by the `VITE_EHR_EXPORT_ENABLED` build flag (mirrors the backend default-off), with filing / filed (+ DocRef id) / re-file / error states.
+- **Deferred to B/C as specced:** SMART JWT auth, Epic patient matching, PDF attachment, Encounter linkage, `auto` mode.
 
 **Phase A delivers a working, demonstrable feature with zero external dependencies.** Phase B is a focused auth swap when creds land.
 

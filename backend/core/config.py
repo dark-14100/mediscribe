@@ -102,6 +102,25 @@ class Settings(BaseSettings):
     GROUNDING_GROUNDED_THRESHOLD: float = 0.6
     GROUNDING_PARTIAL_THRESHOLD: float = 0.3
 
+    # --- EHR write-back (file the signed note into the hospital EHR as FHIR) ---
+    # Builds a FHIR R4 DocumentReference and POSTs it to a configured FHIR server.
+    #   off    = feature disabled (default)
+    #   manual = doctor triggers via "Send to EHR"
+    #   auto   = file automatically on sign-off (future)
+    EHR_EXPORT_MODE: str = "off"
+    # How we authenticate to the FHIR server:
+    #   none          = open sandbox, no token (e.g. hapi.fhir.org/baseR4)
+    #   smart_backend = SMART Backend Services (client-credentials + signed JWT)
+    EHR_AUTH_MODE: str = "none"
+    EHR_FHIR_BASE_URL: str = "https://hapi.fhir.org/baseR4"
+    EHR_TOKEN_URL: str = ""
+    EHR_CLIENT_ID: str = ""
+    # PEM/JWK private key for smart_backend — a SECRET; never log or commit.
+    EHR_PRIVATE_KEY: str = ""
+    EHR_JWKS_URL: str = ""
+    EHR_SCOPES: str = "system/DocumentReference.read system/DocumentReference.write"
+    EHR_REQUEST_TIMEOUT_SECONDS: float = 30.0
+
     # --- Upload / payload limits (abuse + DoS guards) ---
     MAX_AUDIO_UPLOAD_BYTES: int = 25 * 1024 * 1024  # 25 MB
     MAX_TRANSCRIPT_LINES: int = 5000

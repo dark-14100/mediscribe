@@ -24,9 +24,11 @@ DEFAULT_NOTE_TYPE: Final[str] = "soap"
 #   soap_projection   — {soap_key: [section_key, ...]} to fold this note into SOAP
 #                       for the analyst agents (identity for "soap")
 #   coding            — {"dx_sections": [...], "px_sections": [...]} (used in coding B)
+#   loinc             — (code, display) LOINC document type for EHR write-back
 NOTE_TEMPLATES: Final[dict[str, dict]] = {
     "soap": {
         "label": "SOAP note",
+        "loinc": ("34109-9", "Note"),
         "sections": [
             ("subjective", "Subjective"),
             ("objective", "Objective"),
@@ -50,6 +52,7 @@ NOTE_TEMPLATES: Final[dict[str, dict]] = {
     },
     "hp": {
         "label": "History & Physical",
+        "loinc": ("34117-2", "History and physical note"),
         "sections": [
             ("chief_complaint", "Chief Complaint"),
             ("hpi", "History of Present Illness"),
@@ -79,6 +82,7 @@ NOTE_TEMPLATES: Final[dict[str, dict]] = {
     },
     "progress": {
         "label": "Progress note",
+        "loinc": ("11506-3", "Progress note"),
         "sections": [
             ("interval_history", "Interval History"),
             ("exam", "Exam / Findings"),
@@ -102,6 +106,7 @@ NOTE_TEMPLATES: Final[dict[str, dict]] = {
     },
     "discharge": {
         "label": "Discharge summary",
+        "loinc": ("18842-5", "Discharge summary"),
         "sections": [
             ("admission_dx", "Admission Diagnosis"),
             ("discharge_dx", "Discharge Diagnosis"),
@@ -155,6 +160,12 @@ def grounding_weights(note_type: str | None) -> dict[str, float]:
 
 def soap_projection(note_type: str | None) -> dict[str, list[str]]:
     return dict(get_template(note_type)["soap_projection"])
+
+
+def loinc(note_type: str | None) -> tuple[str, str]:
+    """(code, display) LOINC document type for EHR write-back (DocumentReference.type)."""
+    code, display = get_template(note_type).get("loinc", ("34109-9", "Note"))
+    return code, display
 
 
 def coding_sections(note_type: str | None) -> dict[str, list[str]]:

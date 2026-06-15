@@ -355,6 +355,76 @@
   background: var(--color-bg);
 }
 
+.session-page__ehr {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0.75rem 0;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--color-border);
+}
+
+.session-page__ehr-button {
+  align-self: flex-start;
+  padding: 0.5rem 1rem;
+  border: 1px solid #1a8a7a;
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: #1a8a7a;
+  font-family: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.session-page__ehr-button:hover:not(:disabled) {
+  background: rgba(26, 138, 122, 0.08);
+}
+
+.session-page__ehr-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.session-page__ehr-filed {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.session-page__ehr-filed-tag {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #1a8a7a;
+}
+
+.session-page__ehr-docid {
+  font-family: var(--font-mono, monospace);
+  font-size: 0.78rem;
+  color: var(--color-text-secondary, #475569);
+  background: var(--color-bg);
+  padding: 0.15rem 0.45rem;
+  border-radius: var(--radius-sm, 6px);
+}
+
+.session-page__ehr-refile {
+  border: none;
+  background: none;
+  color: var(--color-primary, #6366f1);
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.session-page__ehr-error {
+  margin: 0;
+  font-size: 0.82rem;
+  color: var(--color-danger, #ef4444);
+}
+
 @media (max-width: 1100px) {
   .session-page__body {
     flex-direction: column;

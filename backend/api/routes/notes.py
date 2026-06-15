@@ -14,11 +14,14 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.deps import require_doctor
+from core.audit import log_phi_access
 from core.config import settings
 from core.note_templates import normalize_note_type
 from db.session import get_db
+from models.patient import Patient
 from models.user import User
 from models.visit import Visit
+from schemas.ehr import EhrExportRequest, EhrExportResult
 from schemas.pipeline import ClinicalNote
 from schemas.visit import (
     NoteSaveRequest,
@@ -28,6 +31,7 @@ from schemas.visit import (
 )
 from services.cache import CacheClient, get_cache, patient_summary_key
 from services.compliance import check as compliance_check
+from services.ehr_export import EhrExportError, export_note
 from services.visit_normalize import normalize_visit
 
 log = logging.getLogger("medscribe.notes")
@@ -221,3 +225,97 @@ async def sign_note(
         is_signed=visit.is_signed,
         signed_at=visit.signed_at,
     )
+
+
+def _existing_ehr_export(trail: dict | None) -> dict | None:
+    block = (trail or {}).get("ehr_export")
+    return block if isinstance(block, dict) else None
+
+
+@router.post("/ehr-export/{visit_id}", response_model=EhrExportResult)
+async def ehr_export(
+    visit_id: UUID,
+    user: Annotated[User, Depends(require_doctor)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+    payload: EhrExportRequest | None = None,
+) -> EhrExportResult:
+    """File a signed note into the configured FHIR server as a DocumentReference.
+
+    Gated on ``EHR_EXPORT_MODE`` (off by default) and a signed note. Idempotent:
+    re-filing an already-exported visit is a no-op unless ``force=true``. The
+    outcome is persisted into ``visit.soap_audit_trail.ehr_export`` and audited.
+    """
+    if (settings.EHR_EXPORT_MODE or "off").strip().lower() == "off":
+        raise HTTPException(
+            status.HTTP_403_FORBIDDEN,
+            detail="EHR export is not enabled on this server.",
+        )
+
+    visit = await _load_my_visit(visit_id, user, db)
+    if not visit.is_signed:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            detail="Sign the note before filing it to the EHR.",
+        )
+
+    force = bool(payload and payload.force)
+    existing = _existing_ehr_export(visit.soap_audit_trail)
+    if existing and existing.get("status") == "filed" and not force:
+        return EhrExportResult.model_validate(existing)
+
+    patient = await db.scalar(
+        select(Patient).where(Patient.id == visit.patient_id)
+    )
+    if patient is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Patient not found")
+
+    note_type = normalize_note_type(visit.note_type)
+    sections = dict(visit.soap_note or {})
+
+    result = EhrExportResult(
+        status="failed",
+        exported_by=str(user.id),
+        exported_at=datetime.now(timezone.utc),
+    )
+    try:
+        outcome = await export_note(
+            note_type=note_type,
+            sections=sections,
+            patient=patient,
+            doctor_name=user.full_name,
+            signed_at=visit.signed_at,
+        )
+        result.status = "filed"
+        result.document_reference_id = outcome["document_reference_id"]
+        result.patient_fhir_id = outcome["patient_fhir_id"]
+        result.fhir_base_url = outcome["fhir_base_url"]
+    except EhrExportError as exc:
+        result.error = str(exc)
+    except Exception:  # noqa: BLE001 — never leak provider detail to the client
+        log.exception("[notes] ehr export failed visit_id=%s", visit_id)
+        result.error = "Could not file the note to the EHR. Please try again."
+
+    # Persist the outcome (success or failure) into the audit trail.
+    trail = dict(visit.soap_audit_trail or {})
+    trail["ehr_export"] = result.model_dump(mode="json")
+    visit.soap_audit_trail = trail
+    await db.commit()
+
+    log_phi_access(
+        user_id=str(user.id),
+        action="ehr_export",
+        resource_type="visit",
+        resource_id=str(visit.id),
+    )
+
+    if result.status != "filed":
+        raise HTTPException(
+            status.HTTP_502_BAD_GATEWAY,
+            detail=result.error or "EHR export failed.",
+        )
+    log.info(
+        "[notes] ehr export filed visit_id=%s doc=%s",
+        visit.id,
+        result.document_reference_id,
+    )
+    return result

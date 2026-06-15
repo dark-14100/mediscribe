@@ -170,6 +170,8 @@ export default function SessionPage() {
   // and whether the backend (enforce mode) has demanded it via a 412.
   const [signAck, setSignAck] = useState(false);
   const [signNeedsAck, setSignNeedsAck] = useState(false);
+  // EHR write-back: { status: 'none'|'sending'|'filed'|'failed', docId, error }
+  const [ehrExport, setEhrExport] = useState({ status: 'none', docId: null, error: null });
   const sseRef = useRef(null);
   // The SSE handlers below are created once; read the live note type via a ref.
   const noteTypeRef = useRef('soap');
@@ -292,6 +294,14 @@ export default function SessionPage() {
         if (visit.soap_audit_trail?.coding) setCoding(visit.soap_audit_trail.coding);
         if (visit.soap_audit_trail?.coding_decisions)
           setCodingDecisions(visit.soap_audit_trail.coding_decisions);
+        if (visit.soap_audit_trail?.ehr_export) {
+          const ex = visit.soap_audit_trail.ehr_export;
+          setEhrExport({
+            status: ex.status === 'filed' ? 'filed' : 'none',
+            docId: ex.document_reference_id ?? null,
+            error: null,
+          });
+        }
 
         if (visit.anomalies?.length) setAnomalies(visit.anomalies);
         if (visit.differentials?.length) setDifferentials(visit.differentials);
@@ -648,6 +658,38 @@ export default function SessionPage() {
     }
   }
 
+  // ── EHR write-back ─────────────────────────────────────────────────────────
+
+  async function handleEhrExport(force = false) {
+    if (!useRealApi) return;
+    setEhrExport((prev) => ({ ...prev, status: 'sending', error: null }));
+    try {
+      const res = await apiFetch(`/notes/ehr-export/${visitId}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force }),
+      });
+      const data = await res.json();
+      setEhrExport({
+        status: 'filed',
+        docId: data.document_reference_id ?? null,
+        error: null,
+      });
+      toast.success('Note filed to the EHR');
+    } catch (err) {
+      let message = 'Could not file the note to the EHR.';
+      if (err?.response) {
+        try {
+          message = await readApiError(err.response);
+        } catch {
+          // keep default
+        }
+      }
+      setEhrExport((prev) => ({ ...prev, status: 'failed', error: message }));
+      toast.error(message);
+    }
+  }
+
   // ── derived ──────────────────────────────────────────────────────────────
 
   const groundingFlags = useMemo(() => {
@@ -660,6 +702,9 @@ export default function SessionPage() {
   }, [grounding]);
 
   const isSigned = pipelineStatus === 'signed';
+  // EHR write-back button is shown only when the operator enables it (mirrors the
+  // backend EHR_EXPORT_MODE, which is off by default).
+  const ehrExportEnabled = useRealApi && import.meta.env.VITE_EHR_EXPORT_ENABLED === 'true';
   const isSaving = pipelineStatus === 'saving' || pipelineStatus === 'signing';
   const recorderDisabled = pipelineStatus === 'running' || isSaving || isSigned;
   const isDegraded = (step) => degradedSteps.includes(step);
@@ -872,6 +917,38 @@ export default function SessionPage() {
                   </p>
                 </div>
               </div>
+              {ehrExportEnabled ? (
+                <div className="session-page__ehr">
+                  {ehrExport.status === 'filed' ? (
+                    <div className="session-page__ehr-filed" role="status">
+                      <span className="session-page__ehr-filed-tag">Filed to EHR ✓</span>
+                      {ehrExport.docId ? (
+                        <span className="session-page__ehr-docid">{ehrExport.docId}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="session-page__ehr-refile"
+                        onClick={() => handleEhrExport(true)}
+                      >
+                        Re-file
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      className="session-page__ehr-button"
+                      onClick={() => handleEhrExport(false)}
+                      disabled={ehrExport.status === 'sending'}
+                    >
+                      {ehrExport.status === 'sending' ? 'Filing to EHR…' : 'Send to EHR'}
+                    </button>
+                  )}
+                  {ehrExport.status === 'failed' && ehrExport.error ? (
+                    <p className="session-page__ehr-error">{ehrExport.error}</p>
+                  ) : null}
+                </div>
+              ) : null}
+
               <div className="session-page__signed-actions">
                 <button
                   type="button"

@@ -155,7 +155,7 @@ Researched against the 2026 leaders (Nuance DAX Copilot, Abridge, Suki, Nabla, D
 
 | Gap | What it means in plain English | Why it's critical | Status |
 |---|---|---|---|
-| **EHR write-back** | We can't yet drop the finished note into Epic/Cerner. The doctor would have to copy-paste. | This is the #1 reason scribes get adopted or abandoned. No write-back = no real clinic use. | ◻️ Next (Phase 2) |
+| **EHR write-back** | We can't yet drop the finished note into Epic/Cerner. The doctor would have to copy-paste. | This is the #1 reason scribes get adopted or abandoned. No write-back = no real clinic use. | 🟡 Phase A shipped (files a FHIR DocumentReference to a configurable FHIR server; open-sandbox now, Epic auth = Phase B). See `EHR_WRITEBACK_SPEC.md` |
 | **De-identification before AI** | We send the raw transcript (with names) to Groq. | The single most-cited HIPAA-AI best practice. Strip identifiers before they leave our walls. | ✅ Done |
 | **Grounding gate** | No automatic check that the note matches what was actually said. | Patient safety + trust. A made-up symptom in a chart is dangerous. We already have the raw material (`source_lines`). | ✅ Done |
 | **Automatic coding** | We don't suggest ICD-10/CPT billing codes. | Table stakes in 2026 and the direct way clinics make/save money. | ✅ Done (suggest + confirm/edit/dismiss; export = Phase C) |
@@ -251,7 +251,7 @@ The core pipeline (our moat) stays exactly as-is. We're **wrapping** it with a t
 | 1 | De-identification before Groq | ✅ Done (rules; NER optional later) | Medium | — |
 | 1 | Evaluation harness | ✅ Done (+ CI gate) | Medium | — |
 | 1 | Degraded banner (frontend) | ✅ Done | Low | backend emits `degraded_steps` |
-| 2 | FHIR DocumentReference write-back | ◻️ Next | High | Epic sandbox access |
+| 2 | FHIR DocumentReference write-back | 🟡 Phase A done (open sandbox; Epic auth = Phase B) | High | Epic sandbox access (Phase B only) |
 | 2 | Coding agent (ICD-10 / CPT / E&M) | ✅ Done (A: suggest · B: confirm/edit/dismiss) | Medium | grounding gate (Phase 1) ✅ |
 | 2 | Multiple note types | ✅ Done (A: SOAP+H&P+progress+discharge · B: per-type coding/compliance · C: demo+eval) | Medium | — |
 | 2 | Live transcription view | ✅ Done (near-live preview; word-level streaming later) | Medium | streaming ASR provider for word-level |
