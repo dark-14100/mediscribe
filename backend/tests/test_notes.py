@@ -47,6 +47,65 @@ async def test_save_note_persists_soap(client, doctor_user):
 
 
 @pytest.mark.asyncio
+async def test_save_note_persists_coding_decisions(client, doctor_user):
+    """Phase B: the doctor's accept/edit/dismiss choices land in the audit trail
+    and survive into the signed record."""
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    body = {
+        **_SOAP_BODY,
+        "coding_decisions": {
+            "accepted": [
+                {
+                    "system": "ICD-10",
+                    "code": "G44.209",
+                    "description": "Tension-type headache",
+                    "origin": "edited",
+                    "source_key": "ICD-10:R51",
+                },
+                {"system": "CPT", "code": "99213", "origin": "manual"},
+            ],
+            "dismissed": ["CPT:93000"],
+        },
+    }
+    resp = await client.post(
+        f"/notes/save/{vid}", json=body, headers=auth_header(doctor_user)
+    )
+    assert resp.status_code == 200
+    trail = resp.json()["soap_audit_trail"]
+    decisions = trail["coding_decisions"]
+    assert decisions["dismissed"] == ["CPT:93000"]
+    assert {a["code"] for a in decisions["accepted"]} == {"G44.209", "99213"}
+    edited = next(a for a in decisions["accepted"] if a["code"] == "G44.209")
+    assert edited["origin"] == "edited"
+    assert edited["source_key"] == "ICD-10:R51"
+
+    # Sign and confirm the decisions persist on the locked record.
+    sign = await client.post(f"/notes/sign/{vid}", headers=auth_header(doctor_user))
+    assert sign.status_code == 200
+    fetched = await client.get(f"/visits/{vid}", headers=auth_header(doctor_user))
+    assert fetched.json()["soap_audit_trail"]["coding_decisions"]["dismissed"] == [
+        "CPT:93000"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_save_note_rejects_invalid_code_system(client, doctor_user):
+    """An unknown code system is rejected by schema validation (422)."""
+    _, vid = await _create_patient_and_visit(client, doctor_user)
+    body = {
+        **_SOAP_BODY,
+        "coding_decisions": {
+            "accepted": [{"system": "NOT-A-SYSTEM", "code": "X", "origin": "manual"}],
+            "dismissed": [],
+        },
+    }
+    resp = await client.post(
+        f"/notes/save/{vid}", json=body, headers=auth_header(doctor_user)
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
 async def test_save_note_invalidates_summary_cache(client, doctor_user, fake_cache):
     pid, vid = await _create_patient_and_visit(client, doctor_user)
     # Prime the cache by hitting /summary once.

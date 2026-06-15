@@ -166,6 +166,33 @@ class CodingResult(BaseModel):
     )
 
 
+class AcceptedCode(BaseModel):
+    """A code the doctor has endorsed for this visit (Phase B).
+
+    ``source_key`` (``"<system>:<original code>"``) links an accepted/edited code
+    back to the AI suggestion it came from; it is ``None`` for codes added
+    manually by the doctor.
+    """
+
+    system: CodeSystem
+    code: str
+    description: str = ""
+    origin: Literal["ai", "edited", "manual"] = "ai"
+    source_key: str | None = None
+
+
+class CodingDecisions(BaseModel):
+    """The doctor's confirm / edit / dismiss choices over the suggested codes.
+
+    Persisted under ``soap_audit_trail.coding_decisions`` (no DB migration) and
+    carried into the signed record. ``accepted`` is the provider-endorsed set;
+    ``dismissed`` holds the ``"<system>:<code>"`` keys of suggestions rejected.
+    """
+
+    accepted: list[AcceptedCode] = Field(default_factory=list)
+    dismissed: list[str] = Field(default_factory=list)
+
+
 # --- Grounding (faithfulness of SOAP claims vs the transcript) ---
 
 GroundingStatus = Literal["grounded", "partial", "ungrounded"]

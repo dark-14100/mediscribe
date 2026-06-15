@@ -244,9 +244,11 @@ Off-switch parity with the other gated steps; `suggest` is advisory and non-bloc
 
 | Phase | Scope | Effort | New deps |
 |---|---|---|---|
-| **A (ship first)** | Schema + `coding.py` + reference data + pipeline Step 5.5 + persist + SSE + read-only `CodingPanel` + config + tests | Medium | **None** |
-| **B** | Doctor **confirm/edit/dismiss**; persist accepted codes (optional dedicated `visit.billing_codes` column + Alembic migration); include in `/notes/save` and the signed record | Medium | — |
+| **A** ✅ shipped | Schema + `coding.py` + reference data + pipeline Step 5.5 + persist + SSE + read-only `CodingPanel` + config + tests | Medium | **None** |
+| **B** ✅ shipped | Doctor **confirm/edit/dismiss** + manual add; persist decisions to `soap_audit_trail.coding_decisions` (no migration); carried via `/notes/save` into the signed record | Medium | — |
 | **C** | **Export** — superbill view + feed accepted codes into the FHIR write-back (`DocumentReference` / `Claim`); ties into the Phase 2 EHR integration | Medium–High | EHR/FHIR work |
+
+**Phase B as built:** decisions are stored under `soap_audit_trail.coding_decisions` (we chose the no-migration path over a dedicated `visit.billing_codes` column — see decision #2). Shape: `{accepted: [{system, code, description, origin: ai|edited|manual, source_key}], dismissed: ["<system>:<code>"]}`. The `CodingPanel` is interactive when unsigned (Confirm / Edit / Dismiss per suggestion, plus manual add) and read-only once signed.
 
 Phase A is self-contained, dependency-free, mirrors the compliance agent, and immediately gives the clinic the codes — the direct path to revenue.
 

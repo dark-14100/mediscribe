@@ -11,7 +11,7 @@ from schemas.coercion import (
     coerce_optional_json_dict,
     coerce_str_list,
 )
-from schemas.pipeline import SOAPNote
+from schemas.pipeline import CodingDecisions, SOAPNote
 
 
 class VisitCreate(BaseModel):
@@ -39,6 +39,9 @@ class NoteSaveRequest(BaseModel):
     soap_note: SOAPNote
     soap_audit_trail: dict[str, Any] = Field(default_factory=dict)
     doctor_modified_fields: list[str] = Field(default_factory=list)
+    # Phase B coding: the doctor's confirm/edit/dismiss choices over suggested
+    # codes. Optional so existing callers (which send no body field) are unaffected.
+    coding_decisions: CodingDecisions | None = None
 
 
 class NoteSignRequest(BaseModel):

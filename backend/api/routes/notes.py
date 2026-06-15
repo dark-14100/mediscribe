@@ -87,6 +87,13 @@ async def save_note(
         trail = dict(visit.soap_audit_trail or {})
         trail["doctor_modified_fields"] = payload.doctor_modified_fields
         visit.soap_audit_trail = trail
+    if payload.coding_decisions is not None:
+        # Phase B: persist the doctor's accept/edit/dismiss choices alongside the
+        # AI suggestions already in the trail (no DB migration; same precedent as
+        # doctor_modified_fields / grounding_ack).
+        trail = dict(visit.soap_audit_trail or {})
+        trail["coding_decisions"] = payload.coding_decisions.model_dump(mode="json")
+        visit.soap_audit_trail = trail
 
     try:
         compliance = await compliance_check(payload.soap_note)

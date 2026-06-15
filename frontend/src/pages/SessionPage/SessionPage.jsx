@@ -93,9 +93,9 @@ function parseRawTranscript(raw) {
     .filter(Boolean);
 }
 
-function soapToRequest(soap, doctorModifiedFields) {
+function soapToRequest(soap, doctorModifiedFields, codingDecisions) {
   const toField = (text) => ({ text: text ?? '', source_lines: [] });
-  return {
+  const body = {
     soap_note: {
       subjective: toField(soap.subjective),
       objective: toField(soap.objective),
@@ -104,6 +104,10 @@ function soapToRequest(soap, doctorModifiedFields) {
     },
     doctor_modified_fields: [...doctorModifiedFields],
   };
+  if (codingDecisions) {
+    body.coding_decisions = codingDecisions;
+  }
+  return body;
 }
 
 function staggerSoapFields(setVisibleFields, setSoap, soapData) {
@@ -143,6 +147,7 @@ export default function SessionPage() {
 
   const [grounding, setGrounding] = useState(null);
   const [coding, setCoding] = useState(null);
+  const [codingDecisions, setCodingDecisions] = useState(null);
   const [anomalies, setAnomalies] = useState([]);
   const [differentials, setDifferentials] = useState([]);
   const [compliance, setCompliance] = useState(null);
@@ -275,6 +280,8 @@ export default function SessionPage() {
 
         if (visit.soap_audit_trail?.grounding) setGrounding(visit.soap_audit_trail.grounding);
         if (visit.soap_audit_trail?.coding) setCoding(visit.soap_audit_trail.coding);
+        if (visit.soap_audit_trail?.coding_decisions)
+          setCodingDecisions(visit.soap_audit_trail.coding_decisions);
 
         if (visit.anomalies?.length) setAnomalies(visit.anomalies);
         if (visit.differentials?.length) setDifferentials(visit.differentials);
@@ -425,6 +432,7 @@ export default function SessionPage() {
       setDegradedSteps([]);
       setGrounding(null);
       setCoding(null);
+      setCodingDecisions(null);
       setPipelineStatus('running');
       try {
         const res = await apiFetch('/pipeline/run', {
@@ -540,7 +548,7 @@ export default function SessionPage() {
       const res = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
+        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields, codingDecisions)),
       });
       const saved = await res.json();
       applyComplianceFromVisit(saved);
@@ -568,7 +576,7 @@ export default function SessionPage() {
       const saveRes = await apiFetch(`/notes/save/${visitId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields)),
+        body: JSON.stringify(soapToRequest(soap, doctorModifiedFields, codingDecisions)),
       });
       const saved = await saveRes.json();
       applyComplianceFromVisit(saved);
@@ -775,7 +783,15 @@ export default function SessionPage() {
 
           <ComplianceBadge compliance={compliance} />
 
-          <CodingPanel coding={coding} />
+          <CodingPanel
+            coding={coding}
+            decisions={codingDecisions}
+            readOnly={isSigned || !useRealApi}
+            onChange={(next) => {
+              setCodingDecisions(next);
+              setHasUnsavedChanges(true);
+            }}
+          />
 
           {saveError && <p className="session-page__error">{saveError}</p>}
 
