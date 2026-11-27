@@ -1,22 +1,25 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { BASE_URL, login as apiLogin } from '../../lib/api.js';
+import { login as apiLogin } from '../../lib/api.js';
 import { useAuth } from '../../lib/authContext.js';
 import './LoginPage.css';
 
 const LOGIN_ERRORS = {
-  network:
-    "Can't reach the server. Confirm the API is running and VITE_API_URL points to your Railway backend.",
+  network: "Can't reach MedScribe right now. Try again in a moment.",
   credentials: 'Email or password is incorrect.',
-  notfound:
-    'API returned 404. On Vercel, set VITE_API_URL to your Railway URL (e.g. https://mediscribe-production-88bd.up.railway.app), not the Vercel site URL, then redeploy.',
+  notfound: 'The sign-in service is unavailable. Try again in a moment.',
   server: 'Something went wrong on the server. Try again in a moment.',
 };
 
+const DEMO_ACCOUNT = {
+  email: 'dr.demo@example.com',
+  password: 'demo1234',
+};
+
 const FEATURES = [
-  { label: 'Live SOAP', icon: 'soap' },
-  { label: 'Trajectory', icon: 'trajectory' },
-  { label: 'Compliance', icon: 'compliance' },
+  { label: 'Live SOAP notes', detail: 'Structured as the visit unfolds', icon: 'soap' },
+  { label: 'Longitudinal memory', detail: 'Change surfaced across every visit', icon: 'trajectory' },
+  { label: 'Trust layer', detail: 'Grounding and compliance built in', icon: 'compliance' },
 ];
 
 function LogoMark() {
@@ -88,7 +91,7 @@ export default function LoginPage() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
-  const [loading, setLoading] = useState(false);
+  const [loadingAction, setLoadingAction] = useState(null);
 
   const redirectTo = location.state?.from || '/dashboard';
 
@@ -96,18 +99,17 @@ export default function LoginPage() {
     setErrorMessage('');
   }
 
-  async function handleSubmit(event) {
-    event.preventDefault();
+  async function signIn(loginEmail, loginPassword, destination, action) {
     setErrorMessage('');
-    setLoading(true);
+    setLoadingAction(action);
 
     try {
       // The backend sets the HttpOnly session cookie on this response; we don't
       // store the token ourselves. refresh() then hydrates the user via /auth/me
       // and primes the CSRF token.
-      await apiLogin(email, password);
+      await apiLogin(loginEmail, loginPassword);
       await refresh();
-      navigate(redirectTo, { replace: true });
+      navigate(destination, { replace: true });
     } catch (err) {
       const code =
         err?.code === 'credentials' ||
@@ -118,8 +120,17 @@ export default function LoginPage() {
           : 'server';
       setErrorMessage(LOGIN_ERRORS[code]);
     } finally {
-      setLoading(false);
+      setLoadingAction(null);
     }
+  }
+
+  async function handleSubmit(event) {
+    event.preventDefault();
+    await signIn(email, password, redirectTo, 'signin');
+  }
+
+  async function handleDemo() {
+    await signIn(DEMO_ACCOUNT.email, DEMO_ACCOUNT.password, '/dashboard', 'demo');
   }
 
   return (
@@ -132,47 +143,79 @@ export default function LoginPage() {
           </div>
 
           <p className="login-page__tagline">
-            Documentation that remembers every visit
+            One visit tells a story.<br />Six visits reveal the pattern.
+          </p>
+
+          <p className="login-page__brand-copy">
+            MedScribe turns the clinical conversation into a structured record,
+            then keeps watching what changes over time.
           </p>
 
           <ul className="login-page__features">
             {FEATURES.map((feature) => (
-              <li key={feature.label} className="login-page__badge">
+              <li key={feature.label} className="login-page__feature">
                 <span className="login-page__badge-icon">
                   <FeatureIcon type={feature.icon} />
                 </span>
-                {feature.label}
+                <span>
+                  <strong>{feature.label}</strong>
+                  <small>{feature.detail}</small>
+                </span>
               </li>
             ))}
           </ul>
+
+          <svg className="login-page__trajectory" viewBox="0 0 560 170" aria-hidden="true">
+            <path d="M10 125C92 124 104 69 180 82s105 74 181 40 98-94 189-102" />
+            <circle cx="10" cy="125" r="5" />
+            <circle cx="180" cy="82" r="5" />
+            <circle cx="361" cy="122" r="5" />
+            <circle cx="550" cy="20" r="5" />
+          </svg>
         </div>
       </aside>
 
       <section className="login-page__form-panel">
         <div className="login-page__form-wrap">
           <header className="login-page__form-header">
-            <h1>Sign in</h1>
-            <p>Access your patient sessions and longitudinal intelligence.</p>
+            <h1>Enter the workspace</h1>
+            <p>Review patient sessions, notes, and longitudinal signals.</p>
           </header>
 
+          {errorMessage ? (
+            <p className="login-page__error" role="alert">
+              {errorMessage}
+            </p>
+          ) : null}
+
+          <section className="login-page__demo" aria-labelledby="demo-title">
+            <div>
+              <h2 id="demo-title">Tour the seeded patient record</h2>
+              <p>Maria Hernandez · 6 visits · longitudinal decline</p>
+            </div>
+            <button
+              type="button"
+              className="login-page__demo-button"
+              onClick={handleDemo}
+              disabled={Boolean(loadingAction)}
+            >
+              {loadingAction === 'demo' ? 'Opening demo…' : 'Open demo workspace'}
+            </button>
+            <dl className="login-page__demo-credentials">
+              <div>
+                <dt>Email</dt>
+                <dd>{DEMO_ACCOUNT.email}</dd>
+              </div>
+              <div>
+                <dt>Password</dt>
+                <dd>{DEMO_ACCOUNT.password}</dd>
+              </div>
+            </dl>
+          </section>
+
+          <div className="login-page__divider"><span>or sign in</span></div>
+
           <form className="login-page__form" onSubmit={handleSubmit}>
-            {errorMessage ? (
-              <p className="login-page__error" role="alert">
-                {errorMessage}
-              </p>
-            ) : null}
-
-            {!import.meta.env.VITE_API_URL ? (
-              <p className="login-page__error" role="alert">
-                API URL is not configured. Set VITE_API_URL on Vercel to your Railway backend and
-                redeploy.
-              </p>
-            ) : (
-              <p className="login-page__api-hint">
-                API: {BASE_URL}
-              </p>
-            )}
-
             <label className="login-page__field">
               <span>Email</span>
               <input
@@ -206,9 +249,9 @@ export default function LoginPage() {
             <button
               type="submit"
               className="login-page__submit"
-              disabled={loading}
+              disabled={Boolean(loadingAction)}
             >
-              {loading ? 'Signing in…' : 'Sign In'}
+              {loadingAction === 'signin' ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
         </div>

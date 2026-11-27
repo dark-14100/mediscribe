@@ -6,6 +6,7 @@ registration. No business logic lives here.
 import logging
 import os
 from contextlib import asynccontextmanager
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import ResponseValidationError
@@ -61,8 +62,11 @@ def _validate_production_transport() -> None:
     if not settings.is_production:
         return
     url = (settings.REDIS_URL or "").strip().lower()
-    is_local = "localhost" in url or "127.0.0.1" in url or "@redis:" in url
-    if url.startswith("redis://") and not is_local:
+    hostname = urlparse(url).hostname or ""
+    is_private = hostname in {"localhost", "127.0.0.1", "redis"} or (
+        hostname.startswith("red-") and "." not in hostname
+    )
+    if url.startswith("redis://") and not is_private:
         raise RuntimeError(
             "REDIS_URL must use TLS (rediss://) in production to protect "
             "PHI-derived data in transit."
