@@ -8,7 +8,7 @@ import asyncio
 from logging.config import fileConfig
 
 from alembic import context
-from sqlalchemy import pool
+from sqlalchemy import pool, text
 from sqlalchemy.engine import Connection
 import models  # noqa: F401 — registers every ORM model with Base.metadata
 from core.config import settings
@@ -32,13 +32,25 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        version_num_length=128,
     )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    if connection.dialect.name == "postgresql":
+        connection.execute(
+            text(
+                "ALTER TABLE IF EXISTS alembic_version "
+                "ALTER COLUMN version_num TYPE VARCHAR(128)"
+            )
+        )
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_num_length=128,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
